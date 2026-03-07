@@ -26,6 +26,14 @@ pub fn router(state: AppState) -> Router {
         // Camera endpoints
         .route("/api/camera/capture", get(handlers::camera_capture))
         .route("/api/camera/list", get(handlers::camera_list))
+        // Dataset capture
+        .route("/api/dataset/capture", post(handlers::dataset_capture))
+        .route("/api/dataset/count", get(handlers::dataset_count))
+        // Vision endpoints
+        .route("/api/vision/detect_all", post(handlers::vision_detect_all))
+        .route("/api/vision/detect_pocket", post(handlers::vision_detect_pocket))
+        .route("/api/vision/detect_fiducial", post(handlers::vision_detect_fiducial))
+        .route("/api/vision/align_part", post(handlers::vision_align_part))
         // WebSocket endpoints
         .route("/api/camera/stream", get(ws::camera_stream))
         .route("/api/events", get(ws::events))

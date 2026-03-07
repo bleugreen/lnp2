@@ -60,3 +60,38 @@ export async function getCameraList() {
 export async function sendGcode(command) {
   return request('POST', '/api/gcode', { command });
 }
+
+// --- Dataset ---
+
+export async function datasetCapture(camera, label) {
+  return request('POST', '/api/dataset/capture', { camera, label: label || null });
+}
+
+export async function datasetCount() {
+  return request('GET', '/api/dataset/count');
+}
+
+// --- Vision ---
+
+export async function detectAll(camera, confidenceThreshold = 0.3) {
+  return request('POST', '/api/vision/detect_all', {
+    camera,
+    confidence_threshold: confidenceThreshold,
+  });
+}
+
+export async function detectPocket(camera, expectedWidthMm, expectedHeightMm) {
+  return request('POST', '/api/vision/detect_pocket', {
+    camera,
+    expected_width_mm: expectedWidthMm,
+    expected_height_mm: expectedHeightMm,
+  });
+}
+
+export async function detectFiducial(camera, minDiameterMm = 0.5, maxDiameterMm = 2.0) {
+  return request('POST', '/api/vision/detect_fiducial', {
+    camera,
+    min_diameter_mm: minDiameterMm,
+    max_diameter_mm: maxDiameterMm,
+  });
+}

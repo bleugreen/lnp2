@@ -8,6 +8,7 @@ use crate::config::{FullConfig, MachineConfig};
 use crate::events::EventBus;
 use crate::gcode::GCodeDriver;
 use crate::motion::MotionController;
+use crate::vision::VisionEngine;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -17,6 +18,7 @@ pub struct AppState {
     pub config: Arc<RwLock<MachineConfig>>,
     pub full_config: Arc<RwLock<FullConfig>>,
     pub camera: Option<Arc<CameraManager>>,
+    pub vision: Option<Arc<VisionEngine>>,
     pub event_bus: Arc<EventBus>,
 }
 
@@ -25,6 +27,7 @@ impl AppState {
         gcode: Arc<GCodeDriver>,
         full_config: FullConfig,
         camera: Option<CameraManager>,
+        vision: Option<VisionEngine>,
         event_bus: EventBus,
     ) -> Self {
         let machine_config = Arc::new(RwLock::new(full_config.machine.clone()));
@@ -38,6 +41,7 @@ impl AppState {
             config: machine_config,
             full_config: Arc::new(RwLock::new(full_config)),
             camera: camera.map(Arc::new),
+            vision: vision.map(Arc::new),
             event_bus: Arc::new(event_bus),
         }
     }

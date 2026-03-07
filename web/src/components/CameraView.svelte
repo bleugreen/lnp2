@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { createCameraSocket } from '../lib/websocket.js';
   import { position, jogFeedrate } from '../lib/stores.js';
-  import { moveTo, getCameraList } from '../lib/api.js';
+  import { moveTo, getCameraList, detectAll, datasetCapture, datasetCount } from '../lib/api.js';
 
   let canvas;
   let ctx;
@@ -12,6 +12,28 @@
   let cameraConfigs = $state({});
   let width = $state(1280);
   let height = $state(720);
+
+  // ML overlay state
+  let detections = $state([]);
+  let mlEnabled = $state(false);
+  let mlInterval = null;
+  let mlBusy = false;
+
+  // Dataset capture state
+  let captureCount = $state(0);
+  let captureFlash = $state(false);
+
+  // Class colors for overlay
+  const CLASS_COLORS = [
+    '#e94560', // red-pink
+    '#00d4aa', // teal
+    '#ffa726', // orange
+    '#42a5f5', // blue
+    '#ab47bc', // purple
+    '#66bb6a', // green
+    '#ef5350', // red
+    '#26c6da', // cyan
+  ];
 
   onMount(async () => {
     ctx = canvas.getContext('2d');
@@ -26,10 +48,13 @@
     } catch {}
 
     connectCamera();
+
+    datasetCount().then(r => captureCount = r.count).catch(() => {});
   });
 
   onDestroy(() => {
     if (socket) socket.destroy();
+    stopMl();
   });
 
   function connectCamera() {
@@ -49,6 +74,7 @@
         canvas.height = bitmap.height;
         ctx.drawImage(bitmap, 0, 0);
         drawCrosshair(bitmap.width, bitmap.height);
+        drawDetections();
       });
     });
   }
@@ -60,22 +86,96 @@
     ctx.strokeStyle = 'rgba(0, 255, 0, 0.6)';
     ctx.lineWidth = 1;
 
-    // Horizontal line
     ctx.beginPath();
     ctx.moveTo(0, cy);
     ctx.lineTo(w, cy);
     ctx.stroke();
 
-    // Vertical line
     ctx.beginPath();
     ctx.moveTo(cx, 0);
     ctx.lineTo(cx, h);
     ctx.stroke();
 
-    // Center circle
     ctx.beginPath();
     ctx.arc(cx, cy, 20, 0, Math.PI * 2);
     ctx.stroke();
+  }
+
+  function drawDetections() {
+    if (!detections.length) return;
+
+    for (const d of detections) {
+      const color = CLASS_COLORS[d.class_id % CLASS_COLORS.length];
+      const x = d.x - d.width / 2;
+      const y = d.y - d.height / 2;
+
+      // Filled rect
+      ctx.fillStyle = color + '22';
+      ctx.fillRect(x, y, d.width, d.height);
+
+      // Border
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.strokeRect(x, y, d.width, d.height);
+
+      // Label background
+      const label = `${d.class_name} ${(d.confidence * 100).toFixed(0)}%`;
+      ctx.font = 'bold 13px monospace';
+      const tw = ctx.measureText(label).width;
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+      ctx.fillRect(x, y - 18, tw + 8, 18);
+
+      // Label text
+      ctx.fillStyle = color;
+      ctx.fillText(label, x + 4, y - 4);
+    }
+  }
+
+  function toggleMl() {
+    mlEnabled = !mlEnabled;
+    if (mlEnabled) {
+      startMl();
+    } else {
+      stopMl();
+    }
+  }
+
+  function startMl() {
+    if (mlInterval) return;
+    runMl(); // Run immediately
+    mlInterval = setInterval(runMl, 500); // Then every 500ms
+  }
+
+  function stopMl() {
+    if (mlInterval) {
+      clearInterval(mlInterval);
+      mlInterval = null;
+    }
+    detections = [];
+  }
+
+  async function runMl() {
+    if (mlBusy) return;
+    mlBusy = true;
+    try {
+      const result = await detectAll(selectedCamera);
+      detections = result.detections || [];
+    } catch {
+      // Model not loaded or other error — silently ignore
+    } finally {
+      mlBusy = false;
+    }
+  }
+
+  async function capture() {
+    try {
+      const result = await datasetCapture(selectedCamera);
+      captureCount = result.count;
+      captureFlash = true;
+      setTimeout(() => captureFlash = false, 300);
+    } catch (e) {
+      console.error('Capture failed:', e);
+    }
   }
 
   function handleClick(e) {
@@ -99,36 +199,56 @@
     position.subscribe((p) => (pos = p))();
 
     const targetX = pos.x + offsetX;
-    const targetY = pos.y - offsetY; // Y is inverted (screen Y down, machine Y up)
+    const targetY = pos.y - offsetY;
 
     moveTo(targetX, targetY, undefined, $jogFeedrate).catch(console.error);
   }
 
   function switchCamera(name) {
     selectedCamera = name;
+    detections = [];
     connectCamera();
   }
 </script>
 
 <div class="camera-container">
-  {#if cameras.length > 1}
-    <div class="camera-selector">
-      {#each cameras as cam}
-        <button
-          class:active={cam === selectedCamera}
-          onclick={() => switchCamera(cam)}
-        >
-          {cam}
-        </button>
-      {/each}
+  <div class="camera-toolbar">
+    {#if cameras.length > 1}
+      <div class="camera-selector">
+        {#each cameras as cam}
+          <button
+            class:active={cam === selectedCamera}
+            onclick={() => switchCamera(cam)}
+          >
+            {cam}
+          </button>
+        {/each}
+      </div>
+    {/if}
+    <div class="vision-controls">
+      <button
+        class:active={mlEnabled}
+        class="ml-toggle"
+        onclick={toggleMl}
+      >
+        {mlEnabled ? 'ML On' : 'ML Off'}
+      </button>
+      <span class="separator"></span>
+      <button class="capture" onclick={capture}>
+        Capture
+      </button>
+      {#if captureCount > 0}
+        <span class="capture-count">{captureCount}</span>
+      {/if}
     </div>
-  {/if}
+  </div>
   <canvas
     bind:this={canvas}
     width={width}
     height={height}
     onclick={handleClick}
     class="camera-canvas"
+    class:flash={captureFlash}
   ></canvas>
 </div>
 
@@ -139,11 +259,17 @@
     overflow: hidden;
   }
 
+  .camera-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.5rem;
+    background: #16213e;
+  }
+
   .camera-selector {
     display: flex;
     gap: 0.5rem;
-    padding: 0.5rem;
-    background: #16213e;
   }
 
   .camera-selector button {
@@ -159,6 +285,62 @@
   .camera-selector button.active {
     background: #0f3460;
     border-color: #e94560;
+  }
+
+  .vision-controls {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+  }
+
+  .vision-controls button {
+    padding: 0.25rem 0.75rem;
+    border: 1px solid #555;
+    border-radius: 4px;
+    background: #2a2a4e;
+    color: #eee;
+    cursor: pointer;
+    font-size: 0.8rem;
+  }
+
+  .vision-controls button:hover:not(:disabled) {
+    background: #3a3a5e;
+  }
+
+  .vision-controls button.ml-toggle {
+    border-color: #555;
+  }
+
+  .vision-controls button.ml-toggle.active {
+    background: #1a6b3a;
+    border-color: #2ecc71;
+    color: #2ecc71;
+  }
+
+  .vision-controls .separator {
+    width: 1px;
+    height: 20px;
+    background: #444;
+  }
+
+  .vision-controls button.capture {
+    background: #1a6b3a;
+    border-color: #2ecc71;
+  }
+
+  .vision-controls button.capture:hover {
+    background: #27ae60;
+  }
+
+  .vision-controls .capture-count {
+    font-size: 0.75rem;
+    color: #888;
+    min-width: 1.5rem;
+    text-align: center;
+  }
+
+  .camera-canvas.flash {
+    opacity: 0.5;
   }
 
   .camera-canvas {

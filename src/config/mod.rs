@@ -83,6 +83,8 @@ pub struct CameraConfig {
     #[serde(default)]
     pub flip_y: bool,
     pub location: Option<Location3D>,
+    #[serde(default)]
+    pub vision: Option<crate::vision::types::VisionConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

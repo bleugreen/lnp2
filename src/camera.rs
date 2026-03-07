@@ -136,7 +136,17 @@ fn capture_loop(
         return;
     }
 
-    info!("[{}] Camera started: {} ({}x{})", name, device, width, height);
+    // Auto-exposure state
+    let mut auto_exp = AutoExposure::new(device);
+    if auto_exp.available {
+        info!("[{}] Camera started: {} ({}x{}) [auto-exposure enabled, initial={}]",
+            name, device, width, height, auto_exp.current_exposure);
+    } else {
+        info!("[{}] Camera started: {} ({}x{}) [auto-exposure unavailable]",
+            name, device, width, height);
+    }
+
+    let mut frame_count: u32 = 0;
 
     loop {
         match camera.frame_raw() {
@@ -147,12 +157,17 @@ fn capture_loop(
                     raw_bytes.to_vec()
                 };
 
-                // Update latest frame (blocking write in sync context)
+                // Adjust exposure every 5 frames (~3/sec at 15fps)
+                if auto_exp.available {
+                    frame_count += 1;
+                    if frame_count % 5 == 0 {
+                        auto_exp.adjust(&jpeg, name);
+                    }
+                }
+
                 if let Ok(mut frame) = latest_frame.try_write() {
                     *frame = Some(jpeg.clone());
                 }
-
-                // Broadcast to subscribers (ignore if no receivers)
                 let _ = broadcast_tx.send(jpeg);
             }
             Err(e) => {
@@ -163,13 +178,128 @@ fn capture_loop(
     }
 }
 
+/// Automatic exposure control via v4l2.
+/// Measures mean brightness of the center region of each frame and nudges
+/// exposure_time_absolute up/down to keep it in a target range.
+struct AutoExposure {
+    device: String,
+    available: bool,
+    current_exposure: i32,
+    min_exposure: i32,
+    max_exposure: i32,
+}
+
+impl AutoExposure {
+    fn new(device: &str) -> Self {
+        // Try to read current exposure and set manual mode
+        let mut ae = Self {
+            device: device.to_string(),
+            available: false,
+            current_exposure: 120,
+            min_exposure: 1,
+            max_exposure: 5000,
+        };
+
+        // Ensure manual exposure mode (value=1)
+        let _ = std::process::Command::new("v4l2-ctl")
+            .args(["-d", device, "-c", "auto_exposure=1"])
+            .output();
+
+        // Read current exposure
+        if let Ok(output) = std::process::Command::new("v4l2-ctl")
+            .args(["-d", device, "-C", "exposure_time_absolute"])
+            .output()
+        {
+            if output.status.success() {
+                let s = String::from_utf8_lossy(&output.stdout);
+                if let Some(val) = s.split(':').nth(1) {
+                    if let Ok(v) = val.trim().parse::<i32>() {
+                        ae.current_exposure = v;
+                        ae.available = true;
+                    }
+                }
+            }
+        }
+
+        ae
+    }
+
+    fn adjust(&mut self, jpeg_bytes: &[u8], cam_name: &str) {
+        let mean = match mean_brightness_center(jpeg_bytes) {
+            Some(v) => v,
+            None => return,
+        };
+
+        // Target: mean brightness 90-150 (out of 255) for center region
+        const TARGET_LOW: f64 = 90.0;
+        const TARGET_HIGH: f64 = 150.0;
+
+        if mean >= TARGET_LOW && mean <= TARGET_HIGH {
+            return; // exposure is fine
+        }
+
+        // Proportional adjustment: bigger error → bigger step
+        // Compute target exposure directly: scale by (target / actual)
+        let target_mean = (TARGET_LOW + TARGET_HIGH) / 2.0; // 120
+        let ratio = target_mean / mean.max(1.0);
+        // Clamp ratio to avoid wild swings from transient frames
+        let ratio = ratio.clamp(0.1, 4.0);
+        let new_exposure = ((self.current_exposure as f64 * ratio) as i32)
+            .clamp(self.min_exposure, self.max_exposure);
+
+        if new_exposure == self.current_exposure {
+            return;
+        }
+
+        let cmd = format!("exposure_time_absolute={}", new_exposure);
+        if let Ok(output) = std::process::Command::new("v4l2-ctl")
+            .args(["-d", &self.device, "-c", &cmd])
+            .output()
+        {
+            if output.status.success() {
+                info!("[{}] Exposure: {} → {} (mean brightness: {:.0})",
+                    cam_name, self.current_exposure, new_exposure, mean);
+                self.current_exposure = new_exposure;
+            }
+        }
+    }
+}
+
+/// Compute mean brightness of the center 50% of a JPEG image.
+/// Uses the `image` crate for decoding — fast enough for periodic checks.
+fn mean_brightness_center(jpeg_bytes: &[u8]) -> Option<f64> {
+    use image::ImageFormat;
+
+    let img = image::load_from_memory_with_format(jpeg_bytes, ImageFormat::Jpeg).ok()?;
+    let gray = img.to_luma8();
+    let (w, h) = gray.dimensions();
+
+    // Sample center 50% of the image
+    let x0 = w / 4;
+    let x1 = 3 * w / 4;
+    let y0 = h / 4;
+    let y1 = 3 * h / 4;
+
+    let mut sum: u64 = 0;
+    let mut count: u64 = 0;
+    for y in y0..y1 {
+        for x in x0..x1 {
+            sum += gray.get_pixel(x, y).0[0] as u64;
+            count += 1;
+        }
+    }
+
+    if count == 0 { return None; }
+    Some(sum as f64 / count as f64)
+}
+
 fn flip_jpeg(jpeg_bytes: &[u8], flip_x: bool, flip_y: bool) -> Vec<u8> {
     use image::ImageFormat;
     use std::io::Cursor;
 
     let img = match image::load_from_memory_with_format(jpeg_bytes, ImageFormat::Jpeg) {
         Ok(img) => img,
-        Err(_) => return jpeg_bytes.to_vec(), // fallback: return original
+        Err(_) => return jpeg_bytes.to_vec(),
     };
 
     let img = if flip_x && flip_y {

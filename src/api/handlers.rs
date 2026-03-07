@@ -313,3 +313,257 @@ pub async fn camera_list(
         None => Json(serde_json::json!({ "cameras": [], "configs": {} })),
     }
 }
+
+// --- Dataset Capture ---
+
+#[derive(Deserialize)]
+pub struct CaptureRequest {
+    pub camera: String,
+    /// Optional label for this capture (e.g. "pocket", "sprocket", "fiducial")
+    #[serde(default)]
+    pub label: Option<String>,
+}
+
+pub async fn dataset_capture(
+    State(state): State<AppState>,
+    Json(req): Json<CaptureRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let camera = state.camera.as_ref().ok_or_else(|| internal_err("No cameras configured"))?;
+    let jpeg = camera.capture(&req.camera).await.map_err(internal_err)?;
+
+    // Get current machine position for metadata
+    let pos = state.motion.get_position().await.ok();
+
+    // Build filename: {timestamp}_{camera}_{label}_{x}_{y}.jpg
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let label = req.label.as_deref().unwrap_or("unlabeled");
+    let pos_str = match pos {
+        Some(ref p) => format!("x{:.1}_y{:.1}", p.x, p.y),
+        None => "nopos".to_string(),
+    };
+    let filename = format!("{}_{}_{}_{}_.jpg", ts, req.camera, label, pos_str);
+
+    // Ensure dataset directory exists
+    let dir = std::path::Path::new("dataset/images");
+    std::fs::create_dir_all(dir).map_err(internal_err)?;
+
+    let path = dir.join(&filename);
+    std::fs::write(&path, &jpeg).map_err(internal_err)?;
+
+    // Count total images
+    let count = std::fs::read_dir(dir)
+        .map(|d| d.filter(|e| e.is_ok()).count())
+        .unwrap_or(0);
+
+    Ok(Json(serde_json::json!({
+        "filename": filename,
+        "count": count,
+        "position": pos,
+    })))
+}
+
+pub async fn dataset_count(
+    State(_state): State<AppState>,
+) -> Json<serde_json::Value> {
+    let dir = std::path::Path::new("dataset/images");
+    let count = std::fs::read_dir(dir)
+        .map(|d| d.filter(|e| e.is_ok()).count())
+        .unwrap_or(0);
+    Json(serde_json::json!({ "count": count }))
+}
+
+// --- Vision ---
+
+#[derive(Deserialize)]
+pub struct VisionDetectAllRequest {
+    pub camera: String,
+    #[serde(default = "default_detect_all_conf")]
+    pub confidence_threshold: f64,
+}
+
+fn default_detect_all_conf() -> f64 { 0.3 }
+
+pub async fn vision_detect_all(
+    State(state): State<AppState>,
+    Json(req): Json<VisionDetectAllRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let camera = state.camera.as_ref().ok_or_else(|| internal_err("No cameras configured"))?;
+    let jpeg = camera.capture(&req.camera).await.map_err(internal_err)?;
+
+    let vision = state.vision.clone();
+    let camera_name = req.camera.clone();
+    let conf = req.confidence_threshold;
+
+    let config_guard = state.config.read().await;
+    let cam_config = config_guard
+        .cameras
+        .get(&req.camera)
+        .ok_or_else(|| internal_err(format!("Camera '{}' not found", req.camera)))?;
+    let class_names: Vec<String> = cam_config
+        .vision
+        .as_ref()
+        .and_then(|v| v.class_names.clone())
+        .unwrap_or_default();
+    drop(config_guard);
+
+    let result = tokio::task::spawn_blocking(move || {
+        let session = vision.as_ref().and_then(|v| v.session_for(&camera_name));
+        let session = session.ok_or_else(|| crate::vision::VisionError::Other("No model loaded".into()))?;
+        let image = crate::vision::cv::decode_frame(&jpeg)?;
+        let mut ctx = crate::vision::context::VisionContext::new(&crate::vision::types::VisionConfig::default());
+        crate::vision::ml::detect_ml(&image, session, conf, &mut ctx)
+    })
+    .await
+    .map_err(|e| internal_err(e))?
+    .map_err(internal_err)?;
+
+    let detections: Vec<serde_json::Value> = result.iter().map(|b| {
+        let class_name = class_names.get(b.class_id)
+            .cloned()
+            .unwrap_or_else(|| format!("class_{}", b.class_id));
+        serde_json::json!({
+            "class_id": b.class_id,
+            "class_name": class_name,
+            "confidence": b.confidence,
+            "x": b.x,
+            "y": b.y,
+            "width": b.width,
+            "height": b.height,
+        })
+    }).collect();
+
+    Ok(Json(serde_json::json!({ "detections": detections })))
+}
+
+#[derive(Deserialize)]
+pub struct VisionDetectPocketRequest {
+    pub camera: String,
+    pub expected_width_mm: f64,
+    pub expected_height_mm: f64,
+}
+
+pub async fn vision_detect_pocket(
+    State(state): State<AppState>,
+    Json(req): Json<VisionDetectPocketRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let camera = state.camera.as_ref().ok_or_else(|| internal_err("No cameras configured"))?;
+    let jpeg = camera.capture(&req.camera).await.map_err(internal_err)?;
+
+    let config_guard = state.config.read().await;
+    let cam_config = config_guard
+        .cameras
+        .get(&req.camera)
+        .ok_or_else(|| internal_err(format!("Camera '{}' not found", req.camera)))?;
+
+    let cal = crate::vision::CameraCalibration::from(cam_config);
+    let vision_config = cam_config
+        .vision
+        .clone()
+        .unwrap_or_default();
+    let expected = (req.expected_width_mm, req.expected_height_mm);
+
+    let vision = state.vision.clone();
+    let camera_name = req.camera.clone();
+
+    let result = tokio::task::spawn_blocking(move || {
+        let session = vision.as_ref().and_then(|v| v.session_for(&camera_name));
+        crate::vision::detect_pocket(&jpeg, expected, &cal, &vision_config, session)
+    })
+    .await
+    .map_err(|e| internal_err(e))?
+    .map_err(internal_err)?;
+
+    Ok(Json(serde_json::json!({ "detection": result })))
+}
+
+#[derive(Deserialize)]
+pub struct VisionDetectFiducialRequest {
+    pub camera: String,
+    #[serde(default = "default_fid_min")]
+    pub min_diameter_mm: f64,
+    #[serde(default = "default_fid_max")]
+    pub max_diameter_mm: f64,
+}
+
+fn default_fid_min() -> f64 { 0.5 }
+fn default_fid_max() -> f64 { 2.0 }
+
+pub async fn vision_detect_fiducial(
+    State(state): State<AppState>,
+    Json(req): Json<VisionDetectFiducialRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let camera = state.camera.as_ref().ok_or_else(|| internal_err("No cameras configured"))?;
+    let jpeg = camera.capture(&req.camera).await.map_err(internal_err)?;
+
+    let config_guard = state.config.read().await;
+    let cam_config = config_guard
+        .cameras
+        .get(&req.camera)
+        .ok_or_else(|| internal_err(format!("Camera '{}' not found", req.camera)))?;
+
+    let cal = crate::vision::CameraCalibration::from(cam_config);
+    let min_d = req.min_diameter_mm;
+    let max_d = req.max_diameter_mm;
+
+    let result = tokio::task::spawn_blocking(move || {
+        crate::vision::detect_fiducial(&jpeg, &cal, min_d, max_d, None)
+    })
+    .await
+    .map_err(|e| internal_err(e))?
+    .map_err(internal_err)?;
+
+    Ok(Json(serde_json::json!({ "detection": result })))
+}
+
+#[derive(Deserialize)]
+pub struct VisionAlignPartRequest {
+    pub camera: String,
+    pub part_id: String,
+}
+
+pub async fn vision_align_part(
+    State(state): State<AppState>,
+    Json(req): Json<VisionAlignPartRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let camera = state.camera.as_ref().ok_or_else(|| internal_err("No cameras configured"))?;
+    let jpeg = camera.capture(&req.camera).await.map_err(internal_err)?;
+
+    // Look up part → package
+    let full_config = state.full_config.read().await;
+    let part = full_config
+        .parts
+        .get(&req.part_id)
+        .ok_or_else(|| internal_err(format!("Part '{}' not found", req.part_id)))?;
+    let package = full_config
+        .packages
+        .get(&part.package_id)
+        .ok_or_else(|| internal_err(format!("Package '{}' not found", part.package_id)))?
+        .clone();
+
+    let config_guard = state.config.read().await;
+    let cam_config = config_guard
+        .cameras
+        .get(&req.camera)
+        .ok_or_else(|| internal_err(format!("Camera '{}' not found", req.camera)))?;
+
+    let cal = crate::vision::CameraCalibration::from(cam_config);
+    let vision_config = cam_config.vision.clone().unwrap_or_default();
+    let vision = state.vision.clone();
+    let camera_name = req.camera.clone();
+
+    drop(config_guard);
+    drop(full_config);
+
+    let result = tokio::task::spawn_blocking(move || {
+        let session = vision.as_ref().and_then(|v| v.session_for(&camera_name));
+        crate::vision::align_part(&jpeg, &package, &cal, &vision_config, session)
+    })
+    .await
+    .map_err(|e| internal_err(e))?
+    .map_err(internal_err)?;
+
+    Ok(Json(serde_json::json!(result)))
+}
