@@ -1,0 +1,25 @@
+# Package definitions (footprints)
+# Each package defines body dimensions, pad layout, and compatible nozzle tips.
+
+# [packages.R0402]
+# body_width = 1.0
+# body_height = 0.5
+# compatible_nozzle_tips = ["N045"]
+#
+# [[packages.R0402.pads]]
+# name = "1"
+# x = -0.375
+# y = 0.0
+# width = 0.25
+# height = 0.5
+# rotation = 0.0
+# roundness = 0.0
+#
+# [[packages.R0402.pads]]
+# name = "2"
+# x = 0.375
+# y = 0.0
+# width = 0.25
+# height = 0.5
+# rotation = 0.0
+# roundness = 0.0

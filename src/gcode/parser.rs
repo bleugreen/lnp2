@@ -9,6 +9,8 @@ static POSITION_RE: LazyLock<Regex> = LazyLock::new(|| {
 });
 static VACUUM_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"data:(?P<Value>.+)").unwrap());
 static ERROR_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(Error:|!!)").unwrap());
+static RS485_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"rs485-reply:\s*(?P<hex>[0-9A-Fa-f]+)").unwrap());
 
 pub fn is_ok(line: &str) -> bool {
     CONFIRM_RE.is_match(line)
@@ -27,6 +29,16 @@ pub fn parse_position(text: &str) -> Option<Position> {
         a: caps["A"].parse().ok()?,
         b: caps["B"].parse().ok()?,
     })
+}
+
+/// Extract the hex payload from an RS-485 reply line.
+pub fn parse_rs485(text: &str) -> Option<String> {
+    for line in text.lines() {
+        if let Some(caps) = RS485_RE.captures(line) {
+            return Some(caps["hex"].to_string());
+        }
+    }
+    None
 }
 
 pub fn parse_vacuum(text: &str) -> Option<f64> {
@@ -65,6 +77,25 @@ mod tests {
         assert!(is_error("Error: Line 1"));
         assert!(is_error("!! Emergency stop"));
         assert!(!is_error("ok"));
+    }
+
+    #[test]
+    fn test_parse_rs485() {
+        let text = "rs485-reply: 0013000D0A000007800B4248571720343331";
+        let hex = parse_rs485(text).unwrap();
+        assert_eq!(hex, "0013000D0A000007800B4248571720343331");
+    }
+
+    #[test]
+    fn test_parse_rs485_with_ok() {
+        let text = "rs485-reply: 2B1347010A03\nok";
+        assert!(parse_rs485(text).is_some());
+    }
+
+    #[test]
+    fn test_parse_rs485_no_match() {
+        assert!(parse_rs485("ok").is_none());
+        assert!(parse_rs485("").is_none());
     }
 
     #[test]

@@ -1,0 +1,12 @@
+# Part definitions
+# Each part references a package and specifies height/speed.
+
+# [parts.R0402-1K]
+# package_id = "R0402"
+# height = 0.5
+# speed = 1.0
+
+# [parts.R0805-1K]
+# package_id = "R0805"
+# height = 1.0
+# speed = 1.0
