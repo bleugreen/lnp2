@@ -239,21 +239,13 @@ impl AutoExposure {
         }
 
         // Proportional adjustment: bigger error → bigger step
-        let new_exposure = if mean > TARGET_HIGH * 1.5 {
-            // Severely overexposed: slam to a low baseline immediately
-            (self.current_exposure as f64 * TARGET_HIGH / mean) as i32
-        } else if mean < TARGET_LOW {
-            // Too dark: scale up proportionally
-            let ratio = (TARGET_LOW / mean.max(1.0)).min(3.0);
-            (self.current_exposure as f64 * ratio) as i32
-        } else if mean > TARGET_HIGH {
-            // Mildly overexposed: step down
-            let ratio = (TARGET_HIGH / mean).max(0.5);
-            (self.current_exposure as f64 * ratio) as i32
-        } else {
-            return; // in range
-        }
-        .clamp(self.min_exposure, self.max_exposure);
+        // Compute target exposure directly: scale by (target / actual)
+        let target_mean = (TARGET_LOW + TARGET_HIGH) / 2.0; // 120
+        let ratio = target_mean / mean.max(1.0);
+        // Clamp ratio to avoid wild swings from transient frames
+        let ratio = ratio.clamp(0.1, 4.0);
+        let new_exposure = ((self.current_exposure as f64 * ratio) as i32)
+            .clamp(self.min_exposure, self.max_exposure);
 
         if new_exposure == self.current_exposure {
             return;
