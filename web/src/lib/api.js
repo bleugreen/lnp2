@@ -60,3 +60,21 @@ export async function getCameraList() {
 export async function sendGcode(command) {
   return request('POST', '/api/gcode', { command });
 }
+
+// --- Vision ---
+
+export async function detectPocket(camera, expectedWidthMm, expectedHeightMm) {
+  return request('POST', '/api/vision/detect_pocket', {
+    camera,
+    expected_width_mm: expectedWidthMm,
+    expected_height_mm: expectedHeightMm,
+  });
+}
+
+export async function detectFiducial(camera, minDiameterMm = 0.5, maxDiameterMm = 2.0) {
+  return request('POST', '/api/vision/detect_fiducial', {
+    camera,
+    min_diameter_mm: minDiameterMm,
+    max_diameter_mm: maxDiameterMm,
+  });
+}

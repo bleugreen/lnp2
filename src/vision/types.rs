@@ -5,11 +5,25 @@ use crate::config::CameraConfig;
 /// Returned by all detection functions.
 #[derive(Debug, Clone, Serialize)]
 pub struct Detection {
+    /// Offset from camera center in mm (for machine correction).
     pub offset_x_mm: f64,
     pub offset_y_mm: f64,
     pub rotation_deg: f64,
     pub confidence: f64,
     pub method: DetectionMethod,
+    /// Detected region in pixel coordinates (for UI overlay drawing).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub region_px: Option<RegionPx>,
+}
+
+/// Pixel-space bounding region for drawing overlays.
+#[derive(Debug, Clone, Serialize)]
+pub struct RegionPx {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+    pub rotation_deg: f64,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -4,7 +4,7 @@ use tracing::debug;
 use super::context::VisionContext;
 use super::cv;
 use super::error::VisionError;
-use super::types::{CameraCalibration, Detection, DetectionMethod, VisionConfig};
+use super::types::{CameraCalibration, Detection, DetectionMethod, RegionPx, VisionConfig};
 
 /// Detect a fiducial marker in the frame.
 ///
@@ -55,6 +55,13 @@ pub fn detect_fiducial(
             rotation_deg: 0.0,
             confidence: score.clamp(0.0, 1.0),
             method: DetectionMethod::CircularSymmetry,
+            region_px: Some(RegionPx {
+                x: circ_center.x as f64,
+                y: circ_center.y as f64,
+                width: diameter_px,
+                height: diameter_px,
+                rotation_deg: 0.0,
+            }),
         });
     }
 
@@ -79,6 +86,7 @@ pub fn detect_fiducial(
                 rotation_deg: 0.0,
                 confidence: score,
                 method: DetectionMethod::TemplateMatch,
+                region_px: None,
             });
         }
     }

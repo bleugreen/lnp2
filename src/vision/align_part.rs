@@ -8,7 +8,8 @@ use super::cv;
 use super::error::VisionError;
 use super::ml::{self, SharedSession};
 use super::types::{
-    AlignmentResult, CameraCalibration, Detection, DetectionMethod, PadDetection, VisionConfig,
+    AlignmentResult, CameraCalibration, Detection, DetectionMethod, PadDetection, RegionPx,
+    VisionConfig,
 };
 
 /// Align a part using bottom camera.
@@ -48,6 +49,11 @@ pub fn align_part(
                             method: DetectionMethod::OnnxModel {
                                 model_name: "yolov8".into(),
                             },
+                            region_px: Some(RegionPx {
+                                x: best.x, y: best.y,
+                                width: best.width, height: best.height,
+                                rotation_deg: best.angle.unwrap_or(0.0),
+                            }),
                         },
                         pad_detections: Vec::new(),
                     })
@@ -265,6 +271,7 @@ fn pad_aware_alignment(
                 pad_count,
                 agreement,
             },
+            region_px: None,
         },
         pad_detections,
     })
@@ -311,6 +318,13 @@ fn min_area_rect_alignment(
             rotation_deg: angle,
             confidence: 0.6,
             method: DetectionMethod::MinAreaRect,
+            region_px: Some(RegionPx {
+                x: rect.center.x as f64,
+                y: rect.center.y as f64,
+                width: rect.size.width as f64,
+                height: rect.size.height as f64,
+                rotation_deg: rect.angle as f64,
+            }),
         },
         pad_detections: Vec::new(),
     })

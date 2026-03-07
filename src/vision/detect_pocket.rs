@@ -4,7 +4,7 @@ use super::context::VisionContext;
 use super::cv;
 use super::error::VisionError;
 use super::ml::{self, SharedSession};
-use super::types::{CameraCalibration, Detection, DetectionMethod, VisionConfig};
+use super::types::{CameraCalibration, Detection, DetectionMethod, RegionPx, VisionConfig};
 
 /// Detect a pocket (feeder slot) in the frame.
 ///
@@ -44,6 +44,11 @@ pub fn detect_pocket(
                     method: DetectionMethod::OnnxModel {
                         model_name: "yolov8".into(),
                     },
+                    region_px: Some(RegionPx {
+                        x: best.x, y: best.y,
+                        width: best.width, height: best.height,
+                        rotation_deg: 0.0,
+                    }),
                 });
             }
             ctx.log("ML: no pocket detected, falling back to CV");
@@ -120,5 +125,12 @@ pub fn detect_pocket(
         rotation_deg: 0.0,
         confidence,
         method: DetectionMethod::AdaptiveContour,
+        region_px: Some(RegionPx {
+            x: rect.center.x as f64,
+            y: rect.center.y as f64,
+            width: rect.size.width as f64,
+            height: rect.size.height as f64,
+            rotation_deg: rect.angle as f64,
+        }),
     })
 }
