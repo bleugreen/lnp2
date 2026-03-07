@@ -9,7 +9,7 @@ use tracing::{info, warn};
 
 pub use feeders::{FeederConfig, FeedersFile};
 pub use nozzle_tips::{NozzleTipConfig, NozzleTipsFile};
-pub use parts::{PackageConfig, PackagesFile, PartConfig, PartsFile};
+pub use parts::{PackageConfig, PackagesFile, PadConfig, PartConfig, PartsFile};
 
 // --- Machine config (existing Phase 1 types) ---
 
@@ -83,6 +83,8 @@ pub struct CameraConfig {
     #[serde(default)]
     pub flip_y: bool,
     pub location: Option<Location3D>,
+    #[serde(default)]
+    pub vision: Option<crate::vision::types::VisionConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

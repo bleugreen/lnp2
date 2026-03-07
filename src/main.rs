@@ -8,6 +8,7 @@ mod import;
 mod motion;
 mod photon;
 mod state;
+mod vision;
 
 use std::path::PathBuf;
 use clap::{Parser, Subcommand};
@@ -166,8 +167,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 None
             };
 
+            // Initialize vision engine (non-fatal if it fails)
+            let vision = match vision::VisionEngine::new(&full_config.machine.cameras) {
+                Ok(v) => {
+                    info!("Vision engine initialized");
+                    Some(v)
+                }
+                Err(e) => {
+                    info!("Vision engine not available: {}", e);
+                    None
+                }
+            };
+
             let event_bus = EventBus::new();
-            let state = AppState::new(gcode, full_config, camera, event_bus);
+            let state = AppState::new(gcode, full_config, camera, vision, event_bus);
 
             // Start position polling task
             let poll_state = state.clone();

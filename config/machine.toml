@@ -89,6 +89,25 @@ upp_y = 0.03703704
 default_z = 61.0
 location = { x = 218.151, y = 151.439, z = 5.7 }
 
+[cameras.bottom.vision]
+adaptive_block_size = 11
+adaptive_c = 2.0
+blur_ksize = 9
+mask_diameter_px = 525
+contour_area_min_mm2 = 0.01
+contour_area_max_mm2 = 900000.0
+prefer_ml = true
+confidence_threshold = 0.5
+save_diagnostics = false
+
+[cameras.bottom.vision.hsv_filter]
+h_min = 60.0
+h_max = 130.0
+s_min = 32.0
+s_max = 255.0
+v_min = 64.0
+v_max = 255.0
+
 [leds]
 on = "M150 P255 R255 U255 B255"
 off = "M150 P0"
