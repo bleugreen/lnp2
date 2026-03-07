@@ -1,4 +1,4 @@
-use opencv::core::Point2f;
+use ort::session::Session;
 use tracing::debug;
 
 use super::context::VisionContext;
@@ -17,7 +17,7 @@ pub fn detect_pocket(
     expected_size_mm: (f64, f64),
     cal: &CameraCalibration,
     config: &VisionConfig,
-    model: Option<&ort::Session>,
+    model: Option<&Session>,
 ) -> Result<Detection, VisionError> {
     let mut ctx = VisionContext::new(config);
     let image = cv::decode_frame(jpeg)?;
@@ -98,6 +98,7 @@ pub fn detect_pocket(
     let rect = cv::fit_min_area_rect(&search_contours)
         .ok_or(VisionError::NoDetection)?;
 
+    use opencv::prelude::RotatedRectTraitConst;
     let rect_center = rect.center();
     let offset_x_mm = (rect_center.x as f64 - center_x) * cal.upp_x;
     let offset_y_mm = (rect_center.y as f64 - center_y) * cal.upp_y;

@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use opencv::core::Mat;
 use opencv::imgcodecs;
+use opencv::prelude::*;
 use tracing::warn;
 
 use super::types::VisionConfig;
@@ -42,8 +43,8 @@ impl VisionContext {
         let mut buf = opencv::core::Vector::<u8>::new();
         let params = opencv::core::Vector::<i32>::new();
         if imgcodecs::imencode(".jpg", mat, &mut buf, &params).unwrap_or(false) {
-            self.checkpoints
-                .push((name.to_string(), buf.to_vec()));
+            let bytes: Vec<u8> = buf.iter().collect();
+            self.checkpoints.push((name.to_string(), bytes));
         }
     }
 
@@ -52,8 +53,10 @@ impl VisionContext {
     }
 
     /// Consume the context, returning all collected diagnostics.
-    pub fn into_diagnostics(self) -> Vec<(String, Vec<u8>)> {
-        self.checkpoints
+    pub fn into_diagnostics(mut self) -> Vec<(String, Vec<u8>)> {
+        // Disable the Drop-based saving since we're returning the data
+        self.save_to = None;
+        std::mem::take(&mut self.checkpoints)
     }
 }
 

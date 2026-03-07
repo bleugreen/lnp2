@@ -1,4 +1,6 @@
-use opencv::core::Point2f;
+use opencv::core::Mat;
+use opencv::prelude::*;
+use ort::session::Session;
 use tracing::debug;
 
 use crate::config::PackageConfig;
@@ -24,7 +26,7 @@ pub fn align_part(
     package: &PackageConfig,
     cal: &CameraCalibration,
     config: &VisionConfig,
-    model: Option<&ort::Session>,
+    model: Option<&Session>,
 ) -> Result<AlignmentResult, VisionError> {
     let mut ctx = VisionContext::new(config);
     let image = cv::decode_frame(jpeg)?;
@@ -62,7 +64,7 @@ pub fn align_part(
     };
 
     // CV preprocessing (shared by Path A and B)
-    let preprocessed = preprocess_for_alignment(&image, cal, config, &mut ctx)?;
+    let preprocessed = preprocess_for_alignment(&image, config, &mut ctx)?;
 
     // Path A: Pad-aware alignment
     let pad_result = if package.pads.len() >= 2 {
@@ -91,7 +93,7 @@ pub fn align_part(
     if let Some(ref pad) = pad_result {
         if let DetectionMethod::PadAlignment { agreement, .. } = pad.detection.method {
             if agreement > 0.9 && pad.detection.confidence > 0.7 {
-                return Ok(pad.unwrap());
+                return Ok(pad.clone());
             }
         }
     }
@@ -102,37 +104,17 @@ pub fn align_part(
         }
     }
 
-    if let Some(pad) = pad_result {
+    if let Some(ref pad) = pad_result {
         if pad.detection.confidence > 0.5 {
-            return Ok(pad.unwrap());
+            return Ok(pad.clone());
         }
     }
 
-    rect_result
-        .map(|r| r.unwrap())
-        .ok_or(VisionError::NoDetection)
+    rect_result.ok_or(VisionError::NoDetection)
 }
-
-/// Intermediate holder so we can compare results before unwrapping.
-struct CandidateResult {
-    detection: Detection,
-    pad_detections: Vec<PadDetection>,
-}
-
-impl CandidateResult {
-    fn unwrap(self) -> AlignmentResult {
-        AlignmentResult {
-            detection: self.detection,
-            pad_detections: self.pad_detections,
-        }
-    }
-}
-
-use opencv::core::Mat;
 
 fn preprocess_for_alignment(
     image: &Mat,
-    cal: &CameraCalibration,
     config: &VisionConfig,
     ctx: &mut VisionContext,
 ) -> Result<Mat, VisionError> {
@@ -172,7 +154,7 @@ fn pad_aware_alignment(
     cal: &CameraCalibration,
     config: &VisionConfig,
     ctx: &mut VisionContext,
-) -> Result<CandidateResult, VisionError> {
+) -> Result<AlignmentResult, VisionError> {
     let center_x = cal.width as f64 / 2.0;
     let center_y = cal.height as f64 / 2.0;
 
@@ -194,7 +176,7 @@ fn pad_aware_alignment(
     }
 
     // Compute centroids of detected contours
-    let mut detected_centroids: Vec<Point2f> = Vec::new();
+    let mut detected_centroids: Vec<opencv::core::Point2f> = Vec::new();
     for i in 0..filtered.len() {
         if let Ok(contour) = filtered.get(i) {
             if let Some(centroid) = cv::contour_centroid(&contour) {
@@ -207,17 +189,11 @@ fn pad_aware_alignment(
         return Err(VisionError::NoDetection);
     }
 
-    // Match detected centroids to expected pad positions (nearest-neighbor)
-    let expected_pads: Vec<(f64, f64)> = package
+    // Expected pad positions in pixel space (relative to image center)
+    let expected_px: Vec<(f64, f64)> = package
         .pads
         .iter()
-        .map(|p| (p.x, p.y))
-        .collect();
-
-    // Expected pad positions in pixel space (relative to image center)
-    let expected_px: Vec<(f64, f64)> = expected_pads
-        .iter()
-        .map(|(x, y)| (center_x + x / cal.upp_x, center_y + y / cal.upp_y))
+        .map(|p| (center_x + p.x / cal.upp_x, center_y + p.y / cal.upp_y))
         .collect();
 
     // Simple nearest-neighbor matching
@@ -266,13 +242,11 @@ fn pad_aware_alignment(
     }
 
     // Solve rigid body transform from expected → detected positions
-    // Using the first two matched pads for simplicity (exact solution for 2 points)
     let (offset_x, offset_y, rotation) = solve_rigid_transform(&pad_detections);
 
     // Compute agreement: inverse of mean per-pad error normalized
     let mean_error: f64 =
         pad_detections.iter().map(|p| p.error_mm).sum::<f64>() / pad_detections.len() as f64;
-    // Agreement: 1.0 when error is 0, drops toward 0 as error grows
     let agreement = 1.0 / (1.0 + mean_error * 10.0);
 
     let confidence = agreement;
@@ -283,7 +257,7 @@ fn pad_aware_alignment(
         offset_x, offset_y, rotation, agreement, pad_count
     );
 
-    Ok(CandidateResult {
+    Ok(AlignmentResult {
         detection: Detection {
             offset_x_mm: offset_x,
             offset_y_mm: offset_y,
@@ -303,7 +277,7 @@ fn min_area_rect_alignment(
     cal: &CameraCalibration,
     config: &VisionConfig,
     ctx: &mut VisionContext,
-) -> Result<CandidateResult, VisionError> {
+) -> Result<AlignmentResult, VisionError> {
     let center_x = cal.width as f64 / 2.0;
     let center_y = cal.height as f64 / 2.0;
 
@@ -317,6 +291,7 @@ fn min_area_rect_alignment(
 
     let rect = cv::fit_min_area_rect(&filtered).ok_or(VisionError::NoDetection)?;
 
+    use opencv::prelude::RotatedRectTraitConst;
     let rect_center = rect.center();
     let offset_x_mm = (rect_center.x as f64 - center_x) * cal.upp_x;
     let offset_y_mm = (rect_center.y as f64 - center_y) * cal.upp_y;
@@ -333,12 +308,12 @@ fn min_area_rect_alignment(
         offset_x_mm, offset_y_mm, angle
     ));
 
-    Ok(CandidateResult {
+    Ok(AlignmentResult {
         detection: Detection {
             offset_x_mm,
             offset_y_mm,
             rotation_deg: angle,
-            confidence: 0.6, // lower confidence than pad-aware
+            confidence: 0.6,
             method: DetectionMethod::MinAreaRect,
         },
         pad_detections: Vec::new(),
@@ -347,8 +322,6 @@ fn min_area_rect_alignment(
 
 /// Solve for the rigid body transform (translation + rotation) that maps
 /// expected pad positions to detected pad positions.
-///
-/// Uses least-squares with all matched pads.
 fn solve_rigid_transform(pads: &[PadDetection]) -> (f64, f64, f64) {
     if pads.is_empty() {
         return (0.0, 0.0, 0.0);

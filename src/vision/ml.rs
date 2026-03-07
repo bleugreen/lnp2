@@ -1,9 +1,13 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-use ndarray::{Array4, ArrayView2, Axis};
+use ndarray::{Array4, Axis};
 use opencv::core::{Mat, Size};
 use opencv::imgproc;
+use opencv::prelude::*;
+use ort::session::Session;
+use ort::session::builder::GraphOptimizationLevel;
+use ort::value::Tensor;
 use tracing::debug;
 
 use super::context::VisionContext;
@@ -23,7 +27,7 @@ pub struct BoundingBox {
 
 /// Loads and caches ONNX models. Thread-safe.
 pub struct ModelManager {
-    sessions: RwLock<HashMap<String, Arc<ort::Session>>>,
+    sessions: RwLock<HashMap<String, Arc<Session>>>,
 }
 
 impl ModelManager {
@@ -34,7 +38,7 @@ impl ModelManager {
     }
 
     /// Load a model from disk. Caches by path.
-    pub fn load(&self, path: &str) -> Result<Arc<ort::Session>, VisionError> {
+    pub fn load(&self, path: &str) -> Result<Arc<Session>, VisionError> {
         // Check cache
         {
             let cache = self.sessions.read().map_err(|e| VisionError::Other(e.to_string()))?;
@@ -44,8 +48,8 @@ impl ModelManager {
         }
 
         // Load and cache
-        let session = ort::Session::builder()?
-            .with_optimization_level(ort::GraphOptimizationLevel::Level3)?
+        let session = Session::builder()?
+            .with_optimization_level(GraphOptimizationLevel::Level3)?
             .with_intra_threads(4)?
             .commit_from_file(path)?;
 
@@ -63,13 +67,15 @@ impl ModelManager {
 /// - BGR → RGB
 /// - Normalize to 0.0–1.0
 /// - Reshape to [1, 3, 640, 640]
+///
+/// Returns (tensor_array, scale, pad_x, pad_y).
 pub fn yolo_preprocess(image: &Mat) -> Result<(Array4<f32>, f64, f64, f64), VisionError> {
     let orig_h = image.rows() as f64;
     let orig_w = image.cols() as f64;
     let target = 640.0;
 
     // Compute letterbox scale
-    let scale = (target / orig_w).min(target / orig_h);
+    let scale = f64::min(target / orig_w, target / orig_h);
     let new_w = (orig_w * scale).round() as i32;
     let new_h = (orig_h * scale).round() as i32;
 
@@ -80,12 +86,12 @@ pub fn yolo_preprocess(image: &Mat) -> Result<(Array4<f32>, f64, f64, f64), Visi
     // Create padded 640x640 image (fill with 114 gray)
     let mut padded = Mat::new_rows_cols_with_default(640, 640, opencv::core::CV_8UC3, opencv::core::Scalar::all(114.0))?;
 
-    let pad_x = ((target as i32 - new_w) / 2) as f64;
-    let pad_y = ((target as i32 - new_h) / 2) as f64;
+    let pad_x = ((640 - new_w) / 2) as f64;
+    let pad_y = ((640 - new_h) / 2) as f64;
 
     // Copy resized into padded
     let roi = opencv::core::Rect::new(pad_x as i32, pad_y as i32, new_w, new_h);
-    let mut roi_mat = Mat::roi(&padded, roi)?;
+    let mut roi_mat = Mat::roi_mut(&mut padded, roi)?;
     resized.copy_to(&mut roi_mat)?;
 
     // BGR → RGB
@@ -94,15 +100,12 @@ pub fn yolo_preprocess(image: &Mat) -> Result<(Array4<f32>, f64, f64, f64), Visi
 
     // Mat to Array4<f32> [1, 3, 640, 640] normalized
     let mut array = Array4::<f32>::zeros((1, 3, 640, 640));
-    let data = rgb.data_bytes()?;
-    for y in 0..640 {
-        for x in 0..640 {
-            let idx = (y * 640 + x) * 3;
-            if idx + 2 < data.len() {
-                array[[0, 0, y, x]] = data[idx] as f32 / 255.0;     // R
-                array[[0, 1, y, x]] = data[idx + 1] as f32 / 255.0; // G
-                array[[0, 2, y, x]] = data[idx + 2] as f32 / 255.0; // B
-            }
+    for y in 0..640usize {
+        for x in 0..640usize {
+            let pixel: &opencv::core::Vec3b = rgb.at_2d(y as i32, x as i32)?;
+            array[[0, 0, y, x]] = pixel[0] as f32 / 255.0; // R
+            array[[0, 1, y, x]] = pixel[1] as f32 / 255.0; // G
+            array[[0, 2, y, x]] = pixel[2] as f32 / 255.0; // B
         }
     }
 
@@ -111,20 +114,17 @@ pub fn yolo_preprocess(image: &Mat) -> Result<(Array4<f32>, f64, f64, f64), Visi
 
 /// Postprocess YOLOv8 output tensor.
 /// Standard YOLOv8 output shape: [1, (4 + num_classes), 8400]
-/// - Apply confidence threshold
-/// - NMS
-/// - Scale boxes back to original image coordinates
+/// After squeezing batch: [(4 + num_classes), 8400]
 pub fn yolo_postprocess(
-    output: &ArrayView2<f32>,
-    original_size: (u32, u32),
+    output: &ndarray::ArrayView2<f32>,
     scale: f64,
     pad_x: f64,
     pad_y: f64,
     conf_threshold: f64,
     nms_threshold: f64,
 ) -> Vec<BoundingBox> {
-    let num_predictions = output.shape()[1]; // 8400
     let num_attrs = output.shape()[0];       // 4 + num_classes
+    let num_predictions = output.shape()[1]; // 8400
 
     if num_attrs < 5 {
         return Vec::new();
@@ -134,7 +134,7 @@ pub fn yolo_postprocess(
 
     for i in 0..num_predictions {
         // Find best class
-        let mut best_class = 0;
+        let mut best_class = 0usize;
         let mut best_conf: f32 = 0.0;
         for c in 4..num_attrs {
             let conf = output[[c, i]];
@@ -231,19 +231,22 @@ fn iou(a: &BoundingBox, b: &BoundingBox) -> f64 {
 /// Run ONNX model inference on a frame.
 pub fn detect_ml(
     image: &Mat,
-    session: &ort::Session,
+    session: &Session,
     conf_threshold: f64,
     ctx: &mut VisionContext,
 ) -> Result<Vec<BoundingBox>, VisionError> {
-    let original_size = (image.cols() as u32, image.rows() as u32);
     let (input, scale, pad_x, pad_y) = yolo_preprocess(image)?;
 
     ctx.log(format!(
         "ML: preprocessed {}x{} → 640x640 (scale={:.3}, pad=({:.0},{:.0}))",
-        original_size.0, original_size.1, scale, pad_x, pad_y
+        image.cols(), image.rows(), scale, pad_x, pad_y
     ));
 
-    let outputs = session.run(ort::inputs!["images" => input.view()]?)?;
+    // Create an ORT tensor from the ndarray
+    let input_tensor = Tensor::from_array(input)?;
+    let inputs = ort::inputs!["images" => input_tensor];
+
+    let outputs = session.run(inputs)?;
 
     // YOLOv8 output: [1, num_attrs, 8400]
     let output_tensor = outputs[0].try_extract_tensor::<f32>()?;
@@ -254,7 +257,6 @@ pub fn detect_ml(
 
     let boxes = yolo_postprocess(
         &squeezed,
-        original_size,
         scale,
         pad_x,
         pad_y,

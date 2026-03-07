@@ -1,4 +1,4 @@
-use opencv::core::{Mat, Point2f};
+use opencv::core::Mat;
 use tracing::debug;
 
 use super::context::VisionContext;

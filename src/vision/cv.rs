@@ -1,6 +1,7 @@
-use opencv::core::{self, Mat, Point, Point2f, Scalar, Size, Vector};
+use opencv::core::{self, Mat, Point, Point2f, Scalar, Size, Size2f, Vector, RotatedRect};
 use opencv::imgcodecs;
 use opencv::imgproc;
+use opencv::prelude::*;
 
 use super::error::VisionError;
 use super::types::CameraCalibration;
@@ -99,8 +100,9 @@ pub fn apply_mask(image: &Mat, mask: &Mat) -> Result<Mat, VisionError> {
 /// Find external contours from a binary image.
 pub fn find_contours(binary: &Mat) -> Result<Vector<Vector<Point>>, VisionError> {
     let mut contours = Vector::<Vector<Point>>::new();
+    let mut binary_clone = binary.clone();
     imgproc::find_contours(
-        binary,
+        &mut binary_clone,
         &mut contours,
         imgproc::RETR_EXTERNAL,
         imgproc::CHAIN_APPROX_SIMPLE,
@@ -135,13 +137,13 @@ pub fn filter_contours_by_area(
 /// Fit minimum area rectangle to the largest contour.
 pub fn fit_min_area_rect(
     contours: &Vector<Vector<Point>>,
-) -> Option<imgproc::RotatedRect> {
+) -> Option<RotatedRect> {
     if contours.is_empty() {
         return None;
     }
 
     let mut best_idx = 0;
-    let mut best_area = 0.0;
+    let mut best_area = 0.0f64;
     for i in 0..contours.len() {
         if let Ok(contour) = contours.get(i) {
             let area = imgproc::contour_area(&contour, false).unwrap_or(0.0);
@@ -157,18 +159,18 @@ pub fn fit_min_area_rect(
         .ok()
         .and_then(|c| {
             if c.len() >= 5 {
-                Some(imgproc::min_area_rect(&c))
+                imgproc::min_area_rect(&c).ok()
             } else {
-                // For fewer than 5 points, use bounding_rect_f
+                // For fewer than 5 points, use bounding_rect
                 let rect = imgproc::bounding_rect(&c).ok()?;
-                Some(imgproc::RotatedRect::new(
+                RotatedRect::new(
                     Point2f::new(
                         rect.x as f32 + rect.width as f32 / 2.0,
                         rect.y as f32 + rect.height as f32 / 2.0,
                     ),
-                    core::Size2f::new(rect.width as f32, rect.height as f32),
+                    Size2f::new(rect.width as f32, rect.height as f32),
                     0.0,
-                ))
+                ).ok()
             }
         })
 }
@@ -200,10 +202,9 @@ pub fn detect_circular_symmetry(
     }
 
     // HoughCircles returns a 1xN matrix with 3 channels (x, y, radius)
-    let circle = circles.at_2d::<core::Vec3f>(0, 0)?;
+    let circle: &core::Vec3f = circles.at_2d(0, 0)?;
     let center = Point2f::new(circle[0], circle[1]);
     let diameter = circle[2] as f64 * 2.0;
-    // Use inverse of radius as a rough confidence (smaller = more precise)
     let score = 1.0;
 
     Ok(Some((center, diameter, score)))
@@ -220,8 +221,8 @@ pub fn template_match(image: &Mat, template: &Mat) -> Result<(Point, f64), Visio
         &Mat::default(),
     )?;
 
-    let mut min_val = 0.0;
-    let mut max_val = 0.0;
+    let mut min_val = 0.0f64;
+    let mut max_val = 0.0f64;
     let mut min_loc = Point::default();
     let mut max_loc = Point::default();
     core::min_max_loc(
