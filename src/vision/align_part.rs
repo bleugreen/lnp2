@@ -1,6 +1,4 @@
 use opencv::core::Mat;
-use opencv::prelude::*;
-use ort::session::Session;
 use tracing::debug;
 
 use crate::config::PackageConfig;
@@ -8,7 +6,7 @@ use crate::config::PackageConfig;
 use super::context::VisionContext;
 use super::cv;
 use super::error::VisionError;
-use super::ml;
+use super::ml::{self, SharedSession};
 use super::types::{
     AlignmentResult, CameraCalibration, Detection, DetectionMethod, PadDetection, VisionConfig,
 };
@@ -26,7 +24,7 @@ pub fn align_part(
     package: &PackageConfig,
     cal: &CameraCalibration,
     config: &VisionConfig,
-    model: Option<&Session>,
+    model: Option<&SharedSession>,
 ) -> Result<AlignmentResult, VisionError> {
     let mut ctx = VisionContext::new(config);
     let image = cv::decode_frame(jpeg)?;
@@ -291,13 +289,11 @@ fn min_area_rect_alignment(
 
     let rect = cv::fit_min_area_rect(&filtered).ok_or(VisionError::NoDetection)?;
 
-    use opencv::prelude::RotatedRectTraitConst;
-    let rect_center = rect.center();
-    let offset_x_mm = (rect_center.x as f64 - center_x) * cal.upp_x;
-    let offset_y_mm = (rect_center.y as f64 - center_y) * cal.upp_y;
+    let offset_x_mm = (rect.center.x as f64 - center_x) * cal.upp_x;
+    let offset_y_mm = (rect.center.y as f64 - center_y) * cal.upp_y;
 
     // OpenCV angle: -90 to 0 for minAreaRect
-    let mut angle = rect.angle() as f64;
+    let mut angle = rect.angle as f64;
     // Normalize to -45..45 range (components are usually closer to 0° or 90°)
     if angle < -45.0 {
         angle += 90.0;

@@ -1,10 +1,9 @@
-use ort::session::Session;
 use tracing::debug;
 
 use super::context::VisionContext;
 use super::cv;
 use super::error::VisionError;
-use super::ml;
+use super::ml::{self, SharedSession};
 use super::types::{CameraCalibration, Detection, DetectionMethod, VisionConfig};
 
 /// Detect a pocket (feeder slot) in the frame.
@@ -17,7 +16,7 @@ pub fn detect_pocket(
     expected_size_mm: (f64, f64),
     cal: &CameraCalibration,
     config: &VisionConfig,
-    model: Option<&Session>,
+    model: Option<&SharedSession>,
 ) -> Result<Detection, VisionError> {
     let mut ctx = VisionContext::new(config);
     let image = cv::decode_frame(jpeg)?;
@@ -98,14 +97,11 @@ pub fn detect_pocket(
     let rect = cv::fit_min_area_rect(&search_contours)
         .ok_or(VisionError::NoDetection)?;
 
-    use opencv::prelude::RotatedRectTraitConst;
-    let rect_center = rect.center();
-    let offset_x_mm = (rect_center.x as f64 - center_x) * cal.upp_x;
-    let offset_y_mm = (rect_center.y as f64 - center_y) * cal.upp_y;
+    let offset_x_mm = (rect.center.x as f64 - center_x) * cal.upp_x;
+    let offset_y_mm = (rect.center.y as f64 - center_y) * cal.upp_y;
 
     // Estimate confidence from area match
-    let rect_size = rect.size();
-    let rect_area_mm2 = (rect_size.width as f64 * cal.upp_x) * (rect_size.height as f64 * cal.upp_y);
+    let rect_area_mm2 = (rect.size.width as f64 * cal.upp_x) * (rect.size.height as f64 * cal.upp_y);
     let area_ratio = if expected_area_mm2 > 0.0 {
         (rect_area_mm2 / expected_area_mm2).min(expected_area_mm2 / rect_area_mm2)
     } else {

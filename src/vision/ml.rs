@@ -1,8 +1,8 @@
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 
 use ndarray::{Array4, Axis};
-use opencv::core::{Mat, Size};
+use opencv::core::{AlgorithmHint, Mat, Size};
 use opencv::imgproc;
 use opencv::prelude::*;
 use ort::session::Session;
@@ -25,9 +25,22 @@ pub struct BoundingBox {
     pub angle: Option<f64>,
 }
 
+/// Thread-safe wrapper around an ort Session (run requires &mut self).
+pub struct SharedSession {
+    inner: Mutex<Session>,
+}
+
+impl SharedSession {
+    pub fn new(session: Session) -> Self {
+        Self {
+            inner: Mutex::new(session),
+        }
+    }
+}
+
 /// Loads and caches ONNX models. Thread-safe.
 pub struct ModelManager {
-    sessions: RwLock<HashMap<String, Arc<Session>>>,
+    sessions: RwLock<HashMap<String, Arc<SharedSession>>>,
 }
 
 impl ModelManager {
@@ -38,7 +51,7 @@ impl ModelManager {
     }
 
     /// Load a model from disk. Caches by path.
-    pub fn load(&self, path: &str) -> Result<Arc<Session>, VisionError> {
+    pub fn load(&self, path: &str) -> Result<Arc<SharedSession>, VisionError> {
         // Check cache
         {
             let cache = self.sessions.read().map_err(|e| VisionError::Other(e.to_string()))?;
@@ -53,12 +66,12 @@ impl ModelManager {
             .with_intra_threads(4)?
             .commit_from_file(path)?;
 
-        let session = Arc::new(session);
+        let shared = Arc::new(SharedSession::new(session));
         {
             let mut cache = self.sessions.write().map_err(|e| VisionError::Other(e.to_string()))?;
-            cache.insert(path.to_string(), session.clone());
+            cache.insert(path.to_string(), shared.clone());
         }
-        Ok(session)
+        Ok(shared)
     }
 }
 
@@ -96,7 +109,7 @@ pub fn yolo_preprocess(image: &Mat) -> Result<(Array4<f32>, f64, f64, f64), Visi
 
     // BGR → RGB
     let mut rgb = Mat::default();
-    imgproc::cvt_color(&padded, &mut rgb, imgproc::COLOR_BGR2RGB, 0)?;
+    imgproc::cvt_color(&padded, &mut rgb, imgproc::COLOR_BGR2RGB, 0, AlgorithmHint::ALGO_HINT_DEFAULT)?;
 
     // Mat to Array4<f32> [1, 3, 640, 640] normalized
     let mut array = Array4::<f32>::zeros((1, 3, 640, 640));
@@ -231,7 +244,7 @@ fn iou(a: &BoundingBox, b: &BoundingBox) -> f64 {
 /// Run ONNX model inference on a frame.
 pub fn detect_ml(
     image: &Mat,
-    session: &Session,
+    session: &SharedSession,
     conf_threshold: f64,
     ctx: &mut VisionContext,
 ) -> Result<Vec<BoundingBox>, VisionError> {
@@ -242,21 +255,24 @@ pub fn detect_ml(
         image.cols(), image.rows(), scale, pad_x, pad_y
     ));
 
-    // Create an ORT tensor from the ndarray
+    // Create an ORT tensor from the ndarray and run inference
     let input_tensor = Tensor::from_array(input)?;
     let inputs = ort::inputs!["images" => input_tensor];
 
+    let mut session = session.inner.lock().map_err(|e| VisionError::Other(e.to_string()))?;
     let outputs = session.run(inputs)?;
 
     // YOLOv8 output: [1, num_attrs, 8400]
-    let output_tensor = outputs[0].try_extract_tensor::<f32>()?;
-    let output_view = output_tensor.view();
+    let output_array = outputs[0].try_extract_array::<f32>()?;
 
     // Remove batch dimension: [num_attrs, 8400]
-    let squeezed = output_view.index_axis(Axis(0), 0);
+    let squeezed = output_array.index_axis(Axis(0), 0);
+    let squeezed_2d: ndarray::ArrayView2<f32> = squeezed
+        .into_dimensionality()
+        .map_err(|e| VisionError::Other(format!("Shape error: {}", e)))?;
 
     let boxes = yolo_postprocess(
-        &squeezed,
+        &squeezed_2d,
         scale,
         pad_x,
         pad_y,

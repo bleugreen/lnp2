@@ -1,4 +1,4 @@
-use opencv::core::{self, Mat, Point, Point2f, Scalar, Size, Size2f, Vector, RotatedRect};
+use opencv::core::{self, Mat, Point, Point2f, Scalar, Size, Size2f, Vector, RotatedRect, AlgorithmHint};
 use opencv::imgcodecs;
 use opencv::imgproc;
 use opencv::prelude::*;
@@ -19,7 +19,7 @@ pub fn decode_frame(jpeg: &[u8]) -> Result<Mat, VisionError> {
 /// Convert BGR image to grayscale.
 pub fn to_gray(image: &Mat) -> Result<Mat, VisionError> {
     let mut gray = Mat::default();
-    imgproc::cvt_color(image, &mut gray, imgproc::COLOR_BGR2GRAY, 0)?;
+    imgproc::cvt_color(image, &mut gray, imgproc::COLOR_BGR2GRAY, 0, AlgorithmHint::ALGO_HINT_DEFAULT)?;
     Ok(gray)
 }
 
@@ -33,6 +33,7 @@ pub fn blur(image: &Mat, ksize: i32) -> Result<Mat, VisionError> {
         0.0,
         0.0,
         core::BORDER_DEFAULT,
+        AlgorithmHint::ALGO_HINT_DEFAULT,
     )?;
     Ok(blurred)
 }
@@ -82,7 +83,7 @@ pub fn mask_circle(image: &Mat, diameter_px: i32) -> Result<Mat, VisionError> {
 /// HSV color range filter — returns binary mask.
 pub fn hsv_filter(image: &Mat, range: &super::types::HsvRange) -> Result<Mat, VisionError> {
     let mut hsv = Mat::default();
-    imgproc::cvt_color(image, &mut hsv, imgproc::COLOR_BGR2HSV, 0)?;
+    imgproc::cvt_color(image, &mut hsv, imgproc::COLOR_BGR2HSV, 0, AlgorithmHint::ALGO_HINT_DEFAULT)?;
     let mut mask = Mat::default();
     let lower = Scalar::new(range.h_min, range.s_min, range.v_min, 0.0);
     let upper = Scalar::new(range.h_max, range.s_max, range.v_max, 0.0);
@@ -100,9 +101,8 @@ pub fn apply_mask(image: &Mat, mask: &Mat) -> Result<Mat, VisionError> {
 /// Find external contours from a binary image.
 pub fn find_contours(binary: &Mat) -> Result<Vector<Vector<Point>>, VisionError> {
     let mut contours = Vector::<Vector<Point>>::new();
-    let mut binary_clone = binary.clone();
     imgproc::find_contours(
-        &mut binary_clone,
+        binary,
         &mut contours,
         imgproc::RETR_EXTERNAL,
         imgproc::CHAIN_APPROX_SIMPLE,
@@ -161,7 +161,6 @@ pub fn fit_min_area_rect(
             if c.len() >= 5 {
                 imgproc::min_area_rect(&c).ok()
             } else {
-                // For fewer than 5 points, use bounding_rect
                 let rect = imgproc::bounding_rect(&c).ok()?;
                 RotatedRect::new(
                     Point2f::new(
@@ -189,10 +188,10 @@ pub fn detect_circular_symmetry(
         gray,
         &mut circles,
         imgproc::HOUGH_GRADIENT,
-        1.0,                    // dp
-        min_diameter_px,        // min_dist between centers
-        100.0,                  // param1 (Canny upper threshold)
-        min_score * 20.0,       // param2 (accumulator threshold)
+        1.0,
+        min_diameter_px,
+        100.0,
+        min_score * 20.0,
         (min_diameter_px / 2.0) as i32,
         (max_diameter_px / 2.0) as i32,
     )?;
@@ -201,7 +200,6 @@ pub fn detect_circular_symmetry(
         return Ok(None);
     }
 
-    // HoughCircles returns a 1xN matrix with 3 channels (x, y, radius)
     let circle: &core::Vec3f = circles.at_2d(0, 0)?;
     let center = Point2f::new(circle[0], circle[1]);
     let diameter = circle[2] as f64 * 2.0;
@@ -234,7 +232,6 @@ pub fn template_match(image: &Mat, template: &Mat) -> Result<(Point, f64), Visio
         &Mat::default(),
     )?;
 
-    // Adjust to center of template
     let tw = template.cols();
     let th = template.rows();
     let center = Point::new(max_loc.x + tw / 2, max_loc.y + th / 2);

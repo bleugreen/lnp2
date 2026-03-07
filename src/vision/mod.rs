@@ -10,22 +10,21 @@ pub mod types;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use ort::session::Session;
 use tracing::{info, warn};
 
 use crate::config::CameraConfig;
 use self::error::VisionError;
-use self::ml::ModelManager;
+use self::ml::{ModelManager, SharedSession};
 
 pub use self::align_part::align_part;
 pub use self::detect_fiducial::detect_fiducial;
 pub use self::detect_pocket::detect_pocket;
-pub use self::types::{AlignmentResult, CameraCalibration, Detection, DetectionMethod, PadDetection};
+pub use self::types::{CameraCalibration, VisionConfig};
 
 /// Holds loaded ML models and config. Created at startup.
 pub struct VisionEngine {
     models: ModelManager,
-    camera_sessions: HashMap<String, Arc<Session>>,
+    camera_sessions: HashMap<String, Arc<SharedSession>>,
 }
 
 impl VisionEngine {
@@ -56,9 +55,9 @@ impl VisionEngine {
     }
 
     /// Get the ONNX session for a camera, if one was loaded.
-    pub fn session_for(&self, camera_name: &str) -> Option<&Session> {
+    pub fn session_for(&self, camera_name: &str) -> Option<&SharedSession> {
         self.camera_sessions
             .get(camera_name)
-            .map(|s: &Arc<Session>| s.as_ref())
+            .map(|s: &Arc<SharedSession>| s.as_ref())
     }
 }

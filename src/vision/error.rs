@@ -35,3 +35,10 @@ impl From<ort::Error> for VisionError {
         VisionError::Onnx(e.to_string())
     }
 }
+
+// Handle ort builder errors (Error<SessionBuilder>)
+impl From<ort::Error<ort::session::builder::SessionBuilder>> for VisionError {
+    fn from(e: ort::Error<ort::session::builder::SessionBuilder>) -> Self {
+        VisionError::Onnx(e.to_string())
+    }
+}
