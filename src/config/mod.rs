@@ -9,7 +9,7 @@ use tracing::{info, warn};
 
 pub use feeders::{FeederConfig, FeedersFile};
 pub use nozzle_tips::{NozzleTipConfig, NozzleTipsFile};
-pub use parts::{PackageConfig, PackagesFile, PadConfig, PartConfig, PartsFile};
+pub use parts::{PackageConfig, PackagesFile, PartConfig, PartsFile};
 
 // --- Machine config (existing Phase 1 types) ---
 

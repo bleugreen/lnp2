@@ -2,7 +2,6 @@ use std::path::PathBuf;
 
 use opencv::core::Mat;
 use opencv::imgcodecs;
-use opencv::prelude::*;
 use tracing::warn;
 
 use super::types::VisionConfig;

@@ -19,7 +19,7 @@ use self::ml::{ModelManager, SharedSession};
 pub use self::align_part::align_part;
 pub use self::detect_fiducial::detect_fiducial;
 pub use self::detect_pocket::detect_pocket;
-pub use self::types::{CameraCalibration, VisionConfig};
+pub use self::types::CameraCalibration;
 
 /// Holds loaded ML models and config. Created at startup.
 pub struct VisionEngine {
