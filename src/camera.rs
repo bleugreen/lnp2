@@ -157,10 +157,10 @@ fn capture_loop(
                     raw_bytes.to_vec()
                 };
 
-                // Adjust exposure every 15 frames (~1/sec at 15fps)
+                // Adjust exposure every 5 frames (~3/sec at 15fps)
                 if auto_exp.available {
                     frame_count += 1;
-                    if frame_count % 15 == 0 {
+                    if frame_count % 5 == 0 {
                         auto_exp.adjust(&jpeg, name);
                     }
                 }
@@ -241,10 +241,11 @@ impl AutoExposure {
         // Proportional adjustment: bigger error → bigger step
         let ratio = if mean < TARGET_LOW {
             // Too dark: increase exposure. ratio > 1.0
-            (TARGET_LOW / mean.max(1.0)).min(2.0)
+            (TARGET_LOW / mean.max(1.0)).min(3.0)
         } else {
             // Too bright: decrease exposure. ratio < 1.0
-            (TARGET_HIGH / mean).max(0.5)
+            // Allow aggressive pullback (0.25 = quarter exposure in one step)
+            (TARGET_HIGH / mean).max(0.25)
         };
 
         let new_exposure = ((self.current_exposure as f64 * ratio) as i32)
