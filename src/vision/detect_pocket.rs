@@ -93,8 +93,11 @@ pub fn detect_pocket(
         };
         let area_px = imgproc::contour_area(&contour, false).unwrap_or(0.0);
 
-        // Skip tiny noise
+        // Skip tiny noise and oversized contours (background, tape body)
         if area_px < config.contour_area_min_mm2 * px_per_mm2 {
+            continue;
+        }
+        if expected_area_px > 0.0 && area_px > expected_area_px * 5.0 {
             continue;
         }
 
