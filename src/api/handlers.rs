@@ -1,6 +1,5 @@
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
-use axum::response::IntoResponse;
 use axum::Json;
 use serde::{Deserialize, Serialize};
 
@@ -10,12 +9,8 @@ use crate::state::AppState;
 // --- Response types ---
 
 #[derive(Serialize)]
-struct ErrorResponse {
+pub(crate) struct ErrorResponse {
     error: String,
-}
-
-fn err(status: StatusCode, msg: impl Into<String>) -> impl IntoResponse {
-    (status, Json(ErrorResponse { error: msg.into() }))
 }
 
 fn internal_err(e: impl std::fmt::Display) -> (StatusCode, Json<ErrorResponse>) {

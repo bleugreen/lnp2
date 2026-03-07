@@ -7,7 +7,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::Mutex;
 use tokio::sync::RwLock;
 use tokio_serial::SerialPortBuilderExt;
-use tracing::{debug, error, warn};
+use tracing::{debug, error};
 
 use crate::config::SerialConfig;
 
@@ -39,8 +39,6 @@ pub enum GCodeError {
     #[error("Parse error: {0}")]
     Parse(String),
 }
-
-type Port = tokio::io::Split<tokio_serial::SerialStream>;
 
 pub struct GCodeDriver {
     reader: Mutex<BufReader<tokio::io::ReadHalf<tokio_serial::SerialStream>>>,
