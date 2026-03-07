@@ -1,10 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use opencv::core::{self as cv_core, Mat, Size, Vector};
-use opencv::imgcodecs;
-use opencv::imgproc;
-use opencv::prelude::{CLAHETrait, VectorToVec};
 use tokio::sync::{broadcast, RwLock};
 use tokio::task::JoinHandle;
 use tracing::{error, info, warn};
