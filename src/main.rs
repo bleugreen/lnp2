@@ -121,17 +121,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .await?;
             let bus = PhotonBus::new(gcode);
 
+            // First get the feeder UUID and initialize it
+            println!("Initializing slot {}...", slot);
+            let uuid = bus.get_feeder_id(slot).await?;
+            println!("  UUID: {}", uuid);
+            bus.initialize(slot, &uuid).await?;
+            println!("  Initialized");
+
             // Convert mm to tenths (0.1mm units)
             let tenths = (distance * 10.0).round() as u8;
-            println!(
-                "Feeding slot {} forward {}mm ({} tenths)...",
-                slot, distance, tenths
-            );
+            println!("Feeding forward {}mm ({} tenths)...", distance, tenths);
 
-            match bus.feed_and_wait(slot, tenths).await {
-                Ok(()) => println!("Feed complete"),
-                Err(e) => println!("Feed error: {}", e),
-            }
+            bus.feed_and_wait(slot, tenths).await?;
+            println!("Feed complete");
         }
         cmd => {
             let config_dir = match cmd {
