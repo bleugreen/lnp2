@@ -299,7 +299,7 @@ fn build_feeders_from_slots(
                     part_id: String::new(),
                     hardware_id: String::new(),
                     slot_address: *address,
-                    location: loc.clone(),
+                    location: FeederLocation { ..loc.clone() },
                     part_pitch: 2.0,
                     retry_count: 3,
                     feed_retry_count: 3,

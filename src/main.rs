@@ -1,6 +1,8 @@
 mod actuators;
 mod api;
+mod camera;
 mod config;
+mod events;
 mod gcode;
 mod import;
 mod motion;
@@ -8,11 +10,12 @@ mod photon;
 mod state;
 
 use std::path::PathBuf;
-
 use clap::{Parser, Subcommand};
 use tokio::net::TcpListener;
 use tracing::info;
 
+use crate::camera::CameraManager;
+use crate::events::{Event, EventBus};
 use crate::gcode::GCodeDriver;
 use crate::photon::PhotonBus;
 use crate::state::AppState;
@@ -154,7 +157,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             )
             .await?;
 
-            let state = AppState::new(gcode, full_config);
+            // Initialize cameras (non-fatal if they fail)
+            let camera = if !full_config.machine.cameras.is_empty() {
+                info!("Starting cameras: {:?}", full_config.machine.cameras.keys().collect::<Vec<_>>());
+                Some(CameraManager::start(&full_config.machine.cameras))
+            } else {
+                info!("No cameras configured");
+                None
+            };
+
+            let event_bus = EventBus::new();
+            let state = AppState::new(gcode, full_config, camera, event_bus);
+
+            // Start position polling task
+            let poll_state = state.clone();
+            tokio::spawn(async move {
+                position_poll_task(poll_state).await;
+            });
 
             let app = api::router(state);
             let addr = "0.0.0.0:3000";
@@ -165,4 +184,50 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+/// Poll position and publish to event bus when changed.
+/// Uses adaptive interval: fast (250ms) after a change, slow (2s) when idle.
+async fn position_poll_task(state: AppState) {
+    let mut last_pos = None::<(f64, f64, f64, f64, f64)>;
+    let mut idle_count: u32 = 0;
+
+    loop {
+        // Adaptive: poll fast after changes, slow down when idle
+        let interval = if idle_count < 4 { 250 } else { 2000 };
+        tokio::time::sleep(std::time::Duration::from_millis(interval)).await;
+
+        // Don't poll while an API command is using the serial port
+        if state.event_bus.busy.load(std::sync::atomic::Ordering::Relaxed) {
+            continue;
+        }
+
+        let pos = match state.motion.get_position().await {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+
+        let current = (pos.x, pos.y, pos.z, pos.a, pos.b);
+        let changed = last_pos.map_or(true, |last| {
+            (last.0 - current.0).abs() > 0.001
+                || (last.1 - current.1).abs() > 0.001
+                || (last.2 - current.2).abs() > 0.001
+                || (last.3 - current.3).abs() > 0.001
+                || (last.4 - current.4).abs() > 0.001
+        });
+
+        if changed {
+            state.event_bus.publish(Event::Position {
+                x: pos.x,
+                y: pos.y,
+                z: pos.z,
+                a: pos.a,
+                b: pos.b,
+            });
+            last_pos = Some(current);
+            idle_count = 0;
+        } else {
+            idle_count = idle_count.saturating_add(1);
+        }
+    }
 }
