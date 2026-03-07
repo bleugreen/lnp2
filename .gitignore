@@ -1,2 +1,4 @@
 .cairn/assets/
 /target/
+web/node_modules/
+web/dist/

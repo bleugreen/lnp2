@@ -1,10 +1,29 @@
+use std::sync::atomic::Ordering;
+
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
+use axum::response::IntoResponse;
 use axum::Json;
 use serde::{Deserialize, Serialize};
 
 use crate::motion::NozzleId;
 use crate::state::AppState;
+
+/// Guard that sets event_bus.busy while serial commands are in flight.
+struct BusyGuard<'a>(&'a crate::events::EventBus);
+
+impl<'a> BusyGuard<'a> {
+    fn new(bus: &'a crate::events::EventBus) -> Self {
+        bus.busy.store(true, Ordering::Relaxed);
+        Self(bus)
+    }
+}
+
+impl<'a> Drop for BusyGuard<'a> {
+    fn drop(&mut self) {
+        self.0.busy.store(false, Ordering::Relaxed);
+    }
+}
 
 // --- Response types ---
 
@@ -70,11 +89,18 @@ pub async fn move_to(
     State(state): State<AppState>,
     Json(req): Json<MoveRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let _busy = BusyGuard::new(&state.event_bus);
     state
         .motion
         .move_to(req.x, req.y, req.z, req.a, req.b, req.feedrate)
         .await
         .map_err(internal_err)?;
+    state.gcode.wait().await.map_err(internal_err)?;
+    // Publish final position after move completes
+    let pos = state.gcode.position().await.map_err(internal_err)?;
+    state.event_bus.publish(crate::events::Event::Position {
+        x: pos.x, y: pos.y, z: pos.z, a: pos.a, b: pos.b,
+    });
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
@@ -88,18 +114,28 @@ pub async fn move_safe(
     State(state): State<AppState>,
     Json(req): Json<MoveSafeRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let _busy = BusyGuard::new(&state.event_bus);
     state
         .motion
         .move_safe(req.x, req.y)
         .await
         .map_err(internal_err)?;
+    let pos = state.gcode.position().await.map_err(internal_err)?;
+    state.event_bus.publish(crate::events::Event::Position {
+        x: pos.x, y: pos.y, z: pos.z, a: pos.a, b: pos.b,
+    });
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
 pub async fn home(
     State(state): State<AppState>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let _busy = BusyGuard::new(&state.event_bus);
     state.motion.home().await.map_err(internal_err)?;
+    let pos = state.gcode.position().await.map_err(internal_err)?;
+    state.event_bus.publish(crate::events::Event::Position {
+        x: pos.x, y: pos.y, z: pos.z, a: pos.a, b: pos.b,
+    });
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
@@ -240,4 +276,40 @@ pub async fn set_config(
     let mut config = state.config.write().await;
     *config = new_config;
     Json(serde_json::json!({ "ok": true }))
+}
+
+// --- Camera ---
+
+#[derive(Deserialize)]
+pub struct CameraCaptureQuery {
+    pub name: String,
+}
+
+pub async fn camera_capture(
+    State(state): State<AppState>,
+    Query(query): Query<CameraCaptureQuery>,
+) -> Result<impl IntoResponse, (StatusCode, Json<ErrorResponse>)> {
+    let camera = state
+        .camera
+        .as_ref()
+        .ok_or_else(|| internal_err("No cameras configured"))?;
+
+    let jpeg = camera.capture(&query.name).await.map_err(internal_err)?;
+
+    Ok(([(axum::http::header::CONTENT_TYPE, "image/jpeg")], jpeg))
+}
+
+pub async fn camera_list(
+    State(state): State<AppState>,
+) -> Json<serde_json::Value> {
+    match &state.camera {
+        Some(camera) => {
+            let configs = camera.configs();
+            Json(serde_json::json!({
+                "cameras": configs.keys().collect::<Vec<_>>(),
+                "configs": configs
+            }))
+        }
+        None => Json(serde_json::json!({ "cameras": [], "configs": {} })),
+    }
 }
