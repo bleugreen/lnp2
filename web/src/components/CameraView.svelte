@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { createCameraSocket } from '../lib/websocket.js';
   import { position, jogFeedrate } from '../lib/stores.js';
-  import { moveTo, getCameraList, detectPocket, detectFiducial } from '../lib/api.js';
+  import { moveTo, getCameraList, detectPocket, detectFiducial, datasetCapture, datasetCount } from '../lib/api.js';
 
   let canvas;
   let ctx;
@@ -17,6 +17,10 @@
   let detection = $state(null);
   let detecting = $state(false);
 
+  // Dataset capture state
+  let captureCount = $state(0);
+  let captureFlash = $state(false);
+
   onMount(async () => {
     ctx = canvas.getContext('2d');
 
@@ -30,6 +34,8 @@
     } catch {}
 
     connectCamera();
+
+    datasetCount().then(r => captureCount = r.count).catch(() => {});
   });
 
   onDestroy(() => {
@@ -136,6 +142,17 @@
     ctx.fillText(`Δ ${ox}, ${oy} mm`, labelX, labelY + 16);
   }
 
+  async function capture() {
+    try {
+      const result = await datasetCapture(selectedCamera);
+      captureCount = result.count;
+      captureFlash = true;
+      setTimeout(() => captureFlash = false, 300);
+    } catch (e) {
+      console.error('Capture failed:', e);
+    }
+  }
+
   async function runDetect(type) {
     detecting = true;
     detection = null;
@@ -212,6 +229,13 @@
       {#if detection}
         <button class="clear" onclick={() => detection = null}>Clear</button>
       {/if}
+      <span class="separator"></span>
+      <button class="capture" onclick={capture}>
+        Capture
+      </button>
+      {#if captureCount > 0}
+        <span class="capture-count">{captureCount}</span>
+      {/if}
     </div>
   </div>
   <canvas
@@ -220,6 +244,7 @@
     height={height}
     onclick={handleClick}
     class="camera-canvas"
+    class:flash={captureFlash}
   ></canvas>
 </div>
 
@@ -286,6 +311,32 @@
     background: transparent;
     border-color: #e94560;
     color: #e94560;
+  }
+
+  .vision-controls .separator {
+    width: 1px;
+    height: 20px;
+    background: #444;
+  }
+
+  .vision-controls button.capture {
+    background: #1a6b3a;
+    border-color: #2ecc71;
+  }
+
+  .vision-controls button.capture:hover {
+    background: #27ae60;
+  }
+
+  .vision-controls .capture-count {
+    font-size: 0.75rem;
+    color: #888;
+    min-width: 1.5rem;
+    text-align: center;
+  }
+
+  .camera-canvas.flash {
+    opacity: 0.5;
   }
 
   .camera-canvas {

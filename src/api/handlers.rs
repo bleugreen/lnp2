@@ -314,6 +314,67 @@ pub async fn camera_list(
     }
 }
 
+// --- Dataset Capture ---
+
+#[derive(Deserialize)]
+pub struct CaptureRequest {
+    pub camera: String,
+    /// Optional label for this capture (e.g. "pocket", "sprocket", "fiducial")
+    #[serde(default)]
+    pub label: Option<String>,
+}
+
+pub async fn dataset_capture(
+    State(state): State<AppState>,
+    Json(req): Json<CaptureRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let camera = state.camera.as_ref().ok_or_else(|| internal_err("No cameras configured"))?;
+    let jpeg = camera.capture(&req.camera).await.map_err(internal_err)?;
+
+    // Get current machine position for metadata
+    let pos = state.motion.get_position().await.ok();
+
+    // Build filename: {timestamp}_{camera}_{label}_{x}_{y}.jpg
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let label = req.label.as_deref().unwrap_or("unlabeled");
+    let pos_str = match pos {
+        Some(ref p) => format!("x{:.1}_y{:.1}", p.x, p.y),
+        None => "nopos".to_string(),
+    };
+    let filename = format!("{}_{}_{}_{}_.jpg", ts, req.camera, label, pos_str);
+
+    // Ensure dataset directory exists
+    let dir = std::path::Path::new("dataset/images");
+    std::fs::create_dir_all(dir).map_err(internal_err)?;
+
+    let path = dir.join(&filename);
+    std::fs::write(&path, &jpeg).map_err(internal_err)?;
+
+    // Count total images
+    let count = std::fs::read_dir(dir)
+        .map(|d| d.filter(|e| e.is_ok()).count())
+        .unwrap_or(0);
+
+    Ok(Json(serde_json::json!({
+        "filename": filename,
+        "count": count,
+        "position": pos,
+    })))
+}
+
+pub async fn dataset_count(
+    State(_state): State<AppState>,
+) -> Json<serde_json::Value> {
+    let dir = std::path::Path::new("dataset/images");
+    let count = std::fs::read_dir(dir)
+        .map(|d| d.filter(|e| e.is_ok()).count())
+        .unwrap_or(0);
+    Json(serde_json::json!({ "count": count }))
+}
+
 // --- Vision ---
 
 #[derive(Deserialize)]

@@ -61,6 +61,16 @@ export async function sendGcode(command) {
   return request('POST', '/api/gcode', { command });
 }
 
+// --- Dataset ---
+
+export async function datasetCapture(camera, label) {
+  return request('POST', '/api/dataset/capture', { camera, label: label || null });
+}
+
+export async function datasetCount() {
+  return request('GET', '/api/dataset/count');
+}
+
 // --- Vision ---
 
 export async function detectPocket(camera, expectedWidthMm, expectedHeightMm) {
