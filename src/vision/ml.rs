@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 
 use ndarray::{Array4, Axis};
-use opencv::core::{AlgorithmHint, Mat, Size};
+use opencv::core::{Mat, Size};
 use opencv::imgproc;
 use opencv::prelude::*;
 use ort::session::Session;
@@ -109,7 +109,7 @@ pub fn yolo_preprocess(image: &Mat) -> Result<(Array4<f32>, f64, f64, f64), Visi
 
     // BGR → RGB
     let mut rgb = Mat::default();
-    imgproc::cvt_color(&padded, &mut rgb, imgproc::COLOR_BGR2RGB, 0, AlgorithmHint::ALGO_HINT_DEFAULT)?;
+    imgproc::cvt_color_def(&padded, &mut rgb, imgproc::COLOR_BGR2RGB)?;
 
     // Mat to Array4<f32> [1, 3, 640, 640] normalized
     let mut array = Array4::<f32>::zeros((1, 3, 640, 640));

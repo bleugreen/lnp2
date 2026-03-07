@@ -1,4 +1,4 @@
-use opencv::core::{self, Mat, Point, Point2f, Scalar, Size, Size2f, Vector, RotatedRect, AlgorithmHint};
+use opencv::core::{self, Mat, Point, Point2f, Scalar, Size, Size2f, Vector, RotatedRect};
 use opencv::imgcodecs;
 use opencv::imgproc;
 use opencv::prelude::*;
@@ -19,22 +19,14 @@ pub fn decode_frame(jpeg: &[u8]) -> Result<Mat, VisionError> {
 /// Convert BGR image to grayscale.
 pub fn to_gray(image: &Mat) -> Result<Mat, VisionError> {
     let mut gray = Mat::default();
-    imgproc::cvt_color(image, &mut gray, imgproc::COLOR_BGR2GRAY, 0, AlgorithmHint::ALGO_HINT_DEFAULT)?;
+    imgproc::cvt_color_def(image, &mut gray, imgproc::COLOR_BGR2GRAY)?;
     Ok(gray)
 }
 
 /// Apply Gaussian blur. `ksize` must be odd.
 pub fn blur(image: &Mat, ksize: i32) -> Result<Mat, VisionError> {
     let mut blurred = Mat::default();
-    imgproc::gaussian_blur(
-        image,
-        &mut blurred,
-        Size::new(ksize, ksize),
-        0.0,
-        0.0,
-        core::BORDER_DEFAULT,
-        AlgorithmHint::ALGO_HINT_DEFAULT,
-    )?;
+    imgproc::gaussian_blur_def(image, &mut blurred, Size::new(ksize, ksize), 0.0)?;
     Ok(blurred)
 }
 
@@ -83,7 +75,7 @@ pub fn mask_circle(image: &Mat, diameter_px: i32) -> Result<Mat, VisionError> {
 /// HSV color range filter — returns binary mask.
 pub fn hsv_filter(image: &Mat, range: &super::types::HsvRange) -> Result<Mat, VisionError> {
     let mut hsv = Mat::default();
-    imgproc::cvt_color(image, &mut hsv, imgproc::COLOR_BGR2HSV, 0, AlgorithmHint::ALGO_HINT_DEFAULT)?;
+    imgproc::cvt_color_def(image, &mut hsv, imgproc::COLOR_BGR2HSV)?;
     let mut mask = Mat::default();
     let lower = Scalar::new(range.h_min, range.s_min, range.v_min, 0.0);
     let upper = Scalar::new(range.h_max, range.s_max, range.v_max, 0.0);
