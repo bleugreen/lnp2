@@ -14,6 +14,7 @@ use tokio::net::TcpListener;
 use tracing::info;
 
 use crate::gcode::GCodeDriver;
+use crate::photon::PhotonBus;
 use crate::state::AppState;
 
 #[derive(Parser)]
@@ -40,6 +41,30 @@ enum Commands {
         #[arg(long, default_value = "config")]
         to: PathBuf,
     },
+    /// Scan RS-485 bus for feeders
+    Scan {
+        /// Config directory path
+        #[arg(long, default_value = "config")]
+        config: PathBuf,
+        /// Start address to scan
+        #[arg(long, default_value_t = 1)]
+        from_addr: u8,
+        /// End address to scan (inclusive)
+        #[arg(long, default_value_t = 25)]
+        to_addr: u8,
+    },
+    /// Feed a specific feeder slot
+    Feed {
+        /// Config directory path
+        #[arg(long, default_value = "config")]
+        config: PathBuf,
+        /// Slot address
+        #[arg(long)]
+        slot: u8,
+        /// Distance in mm (default: 2.0)
+        #[arg(long, default_value_t = 2.0)]
+        distance: f64,
+    },
 }
 
 #[tokio::main]
@@ -53,7 +78,60 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             info!("Importing from {} to {}", from.display(), to.display());
             import::import_openpnp(&from, &to)?;
             info!("Import complete");
-            Ok(())
+        }
+        Some(Commands::Scan {
+            config,
+            from_addr,
+            to_addr,
+        }) => {
+            let full_config = config::load_full_config(&config)?;
+            let gcode = GCodeDriver::connect(
+                &full_config.machine.serial,
+                &full_config.machine.connect.init_commands,
+            )
+            .await?;
+            let bus = PhotonBus::new(gcode);
+
+            println!("Scanning addresses {}..={}", from_addr, to_addr);
+            for addr in from_addr..=to_addr {
+                match bus.get_feeder_id(addr).await {
+                    Ok(uuid) => println!("  slot {:>2}: {} (feeder found)", addr, uuid),
+                    Err(e) => {
+                        let msg = e.to_string();
+                        if msg.contains("Timeout") || msg.contains("No RS-485") {
+                            // No feeder at this address — silent
+                        } else {
+                            println!("  slot {:>2}: {}", addr, msg);
+                        }
+                    }
+                }
+            }
+            println!("Scan complete");
+        }
+        Some(Commands::Feed {
+            config,
+            slot,
+            distance,
+        }) => {
+            let full_config = config::load_full_config(&config)?;
+            let gcode = GCodeDriver::connect(
+                &full_config.machine.serial,
+                &full_config.machine.connect.init_commands,
+            )
+            .await?;
+            let bus = PhotonBus::new(gcode);
+
+            // Convert mm to tenths (0.1mm units)
+            let tenths = (distance * 10.0).round() as u8;
+            println!(
+                "Feeding slot {} forward {}mm ({} tenths)...",
+                slot, distance, tenths
+            );
+
+            match bus.feed_and_wait(slot, tenths).await {
+                Ok(()) => println!("Feed complete"),
+                Err(e) => println!("Feed error: {}", e),
+            }
         }
         cmd => {
             let config_dir = match cmd {
@@ -81,8 +159,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let listener = TcpListener::bind(addr).await?;
             info!("Listening on {}", addr);
             axum::serve(listener, app).await?;
-
-            Ok(())
         }
     }
+
+    Ok(())
 }
