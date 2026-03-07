@@ -1,0 +1,30 @@
+# Feeder definitions
+# Each feeder has a type ("photon" or "tray") and a location.
+
+# Example PhotonFeeder:
+# [feeders.photon_1]
+# type = "photon"
+# enabled = true
+# part_id = "R0402-1K"
+# hardware_id = "0007800B4248571720343331"
+# slot_address = 1
+# location = { x = 28.673, y = 45.468, z = 4.0, rotation = 0.0 }
+# part_pitch = 2.0
+# retry_count = 3
+# feed_retry_count = 3
+# pick_retry_count = 0
+
+# Example TrayFeeder:
+# [feeders.tray_1]
+# type = "tray"
+# enabled = true
+# part_id = "TQFP32_MCU"
+# location = { x = 300.0, y = 150.0, z = 3.0, rotation = 0.0 }
+# tray_count_x = 4
+# tray_count_y = 3
+# offset_x = 10.0
+# offset_y = 10.0
+# first_row_first_col = "top_left"
+# retry_count = 3
+# feed_retry_count = 3
+# pick_retry_count = 0

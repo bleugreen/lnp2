@@ -1,0 +1,26 @@
+# Nozzle tip definitions
+# Each tip has dwell times, part size limits, vacuum thresholds,
+# and a 4-waypoint tool changer sequence.
+
+# [tips.N045]
+# name = "N045"
+# pick_dwell_ms = 200
+# place_dwell_ms = 100
+# min_part_diameter = 0.0
+# max_part_diameter = 5.0
+# max_part_height = 5.0
+#
+# [tips.N045.vacuum]
+# part_on_low = 100.0
+# part_on_high = 300.0
+# part_off_low = 0.0
+# part_off_high = 50.0
+#
+# [tips.N045.changer]
+# first  = { x = 43.614, y = 124.185, z = 31.0, rotation = 0.0 }
+# second = { x = 43.614, y = 124.185, z = 5.5, rotation = 0.0 }
+# third  = { x = 43.614, y = 124.185, z = 8.5, rotation = 0.0 }
+# last   = { x = 63.814, y = 124.185, z = 8.5, rotation = 0.0 }
+# speed_1_to_2 = 0.05
+# speed_2_to_3 = 0.20
+# speed_3_to_4 = 0.50

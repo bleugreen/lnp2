@@ -1,0 +1,129 @@
+[serial]
+port = "/dev/ttyACM0"
+baud = 115200
+timeout_ms = 10000
+motion_timeout_ms = 30000
+home_timeout_ms = 60000
+
+[motion]
+safe_z = 31.5
+default_feedrate = 200.0
+default_acceleration = 1000.0
+
+[axes.x]
+letter = "X"
+min = 0.0
+max = 433.0
+home = 0.0
+feedrate = 200.0
+acceleration = 1000.0
+
+[axes.y]
+letter = "Y"
+min = 0.0
+max = 487.0
+home = 0.0
+feedrate = 200.0
+acceleration = 1000.0
+
+[axes.z]
+letter = "Z"
+min = 0.0
+max = 63.0
+home = 31.5
+feedrate = 200.0
+acceleration = 1000.0
+safe_zone_low = 26.5
+safe_zone_high = 36.5
+
+[axes.a]
+letter = "A"
+min = -200.0
+max = 200.0
+home = 0.0
+feedrate = 50000.0
+acceleration = 500.0
+
+[axes.b]
+letter = "B"
+min = -200.0
+max = 200.0
+home = 0.0
+feedrate = 50000.0
+acceleration = 500.0
+
+[nozzles.n1]
+head_offset = { x = -23.444, y = -64.888 }
+vacuum_on = ["M106 P1 S180", "M106"]
+vacuum_off = ["M107 P1", "M107"]
+blow_on = "M42 P35 S255"
+blow_off = "M42 P35 S0"
+sensor_mux = "M260 A112 B1 S1"
+sensor_read = "M261 A109 B1 S2"
+
+[nozzles.n2]
+head_offset = { x = 23.922, y = -64.393 }
+vacuum_on = ["M106 P2 S255", "M106 P3 S180"]
+vacuum_off = ["M107 P2", "M107 P3"]
+blow_on = "M42 P35 S255"
+blow_off = "M42 P35 S0"
+sensor_mux = "M260 A112 B2 S1"
+sensor_read = "M261 A109 B1 S2"
+
+[cameras.top]
+device = "/dev/video0"
+width = 1280
+height = 720
+upp_x = 0.01302083
+upp_y = 0.01308901
+default_z = 15.0
+flip_x = true
+flip_y = true
+
+[cameras.top.vision]
+model_path = "/home/bleu/models/feeder-v1.onnx"
+prefer_ml = true
+confidence_threshold = 0.3
+class_names = ["pocket", "pocket_with_part", "sprocket"]
+
+[cameras.bottom]
+device = "/dev/video2"
+width = 1280
+height = 720
+upp_x = 0.03669725
+upp_y = 0.03703704
+default_z = 61.0
+location = { x = 218.151, y = 151.439, z = 5.7 }
+
+[cameras.bottom.vision]
+adaptive_block_size = 11
+adaptive_c = 2.0
+blur_ksize = 9
+mask_diameter_px = 525
+contour_area_min_mm2 = 0.01
+contour_area_max_mm2 = 900000.0
+prefer_ml = true
+confidence_threshold = 0.5
+save_diagnostics = false
+
+[cameras.bottom.vision.hsv_filter]
+h_min = 60.0
+h_max = 130.0
+s_min = 32.0
+s_max = 255.0
+v_min = 64.0
+v_max = 255.0
+
+[leds]
+on = "M150 P255 R255 U255 B255"
+off = "M150 P0"
+
+[connect]
+init_commands = [
+    "G21",
+    "G90",
+    "M260 A112 B1 S1",
+    "M260 A109 B48 B27 S1",
+    "M260 A112 B2 S1",
+    "M260 A109 B48 B27 S1",
+]
