@@ -136,40 +136,34 @@ fn capture_loop(
         return;
     }
 
-    // Create CLAHE instance (reused across frames)
-    let mut clahe = match imgproc::create_clahe(3.0, Size::new(8, 8)) {
-        Ok(c) => c,
-        Err(e) => {
-            warn!("[{}] Failed to create CLAHE, running without: {}", name, e);
-            info!("[{}] Camera started: {} ({}x{}) [no CLAHE]", name, device, width, height);
-            // Fall back to simple loop without CLAHE
-            loop {
-                match camera.frame_raw() {
-                    Ok(raw_bytes) => {
-                        let jpeg = raw_bytes.to_vec();
-                        if let Ok(mut frame) = latest_frame.try_write() {
-                            *frame = Some(jpeg.clone());
-                        }
-                        let _ = broadcast_tx.send(jpeg);
-                    }
-                    Err(e) => {
-                        error!("[{}] Frame capture error: {}", name, e);
-                        std::thread::sleep(std::time::Duration::from_millis(100));
-                    }
-                }
-            }
-        }
-    };
+    // Auto-exposure state
+    let mut auto_exp = AutoExposure::new(device);
+    if auto_exp.available {
+        info!("[{}] Camera started: {} ({}x{}) [auto-exposure enabled, initial={}]",
+            name, device, width, height, auto_exp.current_exposure);
+    } else {
+        info!("[{}] Camera started: {} ({}x{}) [auto-exposure unavailable]",
+            name, device, width, height);
+    }
 
-    info!("[{}] Camera started: {} ({}x{}) [CLAHE enabled]", name, device, width, height);
+    let mut frame_count: u32 = 0;
 
     loop {
         match camera.frame_raw() {
             Ok(raw_bytes) => {
-                let jpeg = match process_frame(&raw_bytes, flip_x, flip_y, &mut clahe) {
-                    Ok(processed) => processed,
-                    Err(_) => raw_bytes.to_vec(), // fallback: use raw frame
+                let jpeg = if flip_x || flip_y {
+                    flip_jpeg(&raw_bytes, flip_x, flip_y)
+                } else {
+                    raw_bytes.to_vec()
                 };
+
+                // Adjust exposure every 15 frames (~1/sec at 15fps)
+                if auto_exp.available {
+                    frame_count += 1;
+                    if frame_count % 15 == 0 {
+                        auto_exp.adjust(&jpeg, name);
+                    }
+                }
 
                 if let Ok(mut frame) = latest_frame.try_write() {
                     *frame = Some(jpeg.clone());
@@ -184,53 +178,145 @@ fn capture_loop(
     }
 }
 
-/// Decode JPEG, apply CLAHE normalization and optional flip, re-encode to JPEG.
-fn process_frame(
-    jpeg_bytes: &[u8],
-    flip_x: bool,
-    flip_y: bool,
-    clahe: &mut opencv::core::Ptr<imgproc::CLAHE>,
-) -> Result<Vec<u8>, opencv::Error> {
-    // Decode JPEG → BGR Mat
-    let buf = Vector::from_slice(jpeg_bytes);
-    let mut bgr = imgcodecs::imdecode(&buf, imgcodecs::IMREAD_COLOR)?;
+/// Automatic exposure control via v4l2.
+/// Measures mean brightness of the center region of each frame and nudges
+/// exposure_time_absolute up/down to keep it in a target range.
+struct AutoExposure {
+    device: String,
+    available: bool,
+    current_exposure: i32,
+    min_exposure: i32,
+    max_exposure: i32,
+}
 
-    // Flip if needed
-    if flip_x && flip_y {
-        let mut flipped = Mat::default();
-        cv_core::flip(&bgr, &mut flipped, -1)?; // -1 = both axes
-        bgr = flipped;
-    } else if flip_x {
-        let mut flipped = Mat::default();
-        cv_core::flip(&bgr, &mut flipped, 1)?; // 1 = horizontal
-        bgr = flipped;
-    } else if flip_y {
-        let mut flipped = Mat::default();
-        cv_core::flip(&bgr, &mut flipped, 0)?; // 0 = vertical
-        bgr = flipped;
+impl AutoExposure {
+    fn new(device: &str) -> Self {
+        // Try to read current exposure and set manual mode
+        let mut ae = Self {
+            device: device.to_string(),
+            available: false,
+            current_exposure: 120,
+            min_exposure: 1,
+            max_exposure: 5000,
+        };
+
+        // Ensure manual exposure mode (value=1)
+        let _ = std::process::Command::new("v4l2-ctl")
+            .args(["-d", device, "-c", "auto_exposure=1"])
+            .output();
+
+        // Read current exposure
+        if let Ok(output) = std::process::Command::new("v4l2-ctl")
+            .args(["-d", device, "-C", "exposure_time_absolute"])
+            .output()
+        {
+            if output.status.success() {
+                let s = String::from_utf8_lossy(&output.stdout);
+                if let Some(val) = s.split(':').nth(1) {
+                    if let Ok(v) = val.trim().parse::<i32>() {
+                        ae.current_exposure = v;
+                        ae.available = true;
+                    }
+                }
+            }
+        }
+
+        ae
     }
 
-    // Convert BGR → LAB, apply CLAHE to L channel, convert back
-    let mut lab = Mat::default();
-    imgproc::cvt_color(&bgr, &mut lab, imgproc::COLOR_BGR2Lab, 0)?;
+    fn adjust(&mut self, jpeg_bytes: &[u8], cam_name: &str) {
+        let mean = match mean_brightness_center(jpeg_bytes) {
+            Some(v) => v,
+            None => return,
+        };
 
-    let mut channels: Vector<Mat> = Vector::new();
-    cv_core::split(&lab, &mut channels)?;
+        // Target: mean brightness 90-150 (out of 255) for center region
+        const TARGET_LOW: f64 = 90.0;
+        const TARGET_HIGH: f64 = 150.0;
 
-    let mut l_eq = Mat::default();
-    clahe.apply(&channels.get(0)?, &mut l_eq)?;
-    channels.set(0, l_eq)?;
+        if mean >= TARGET_LOW && mean <= TARGET_HIGH {
+            return; // exposure is fine
+        }
 
-    let mut lab_eq = Mat::default();
-    cv_core::merge(&channels, &mut lab_eq)?;
+        // Proportional adjustment: bigger error → bigger step
+        let ratio = if mean < TARGET_LOW {
+            // Too dark: increase exposure. ratio > 1.0
+            (TARGET_LOW / mean.max(1.0)).min(2.0)
+        } else {
+            // Too bright: decrease exposure. ratio < 1.0
+            (TARGET_HIGH / mean).max(0.5)
+        };
 
-    let mut result = Mat::default();
-    imgproc::cvt_color(&lab_eq, &mut result, imgproc::COLOR_Lab2BGR, 0)?;
+        let new_exposure = ((self.current_exposure as f64 * ratio) as i32)
+            .clamp(self.min_exposure, self.max_exposure);
 
-    // Encode back to JPEG
-    let mut out_buf = Vector::new();
-    let params = Vector::from_slice(&[imgcodecs::IMWRITE_JPEG_QUALITY, 90]);
-    imgcodecs::imencode(".jpg", &result, &mut out_buf, &params)?;
+        if new_exposure == self.current_exposure {
+            return;
+        }
 
-    Ok(out_buf.to_vec())
+        let cmd = format!("exposure_time_absolute={}", new_exposure);
+        if let Ok(output) = std::process::Command::new("v4l2-ctl")
+            .args(["-d", &self.device, "-c", &cmd])
+            .output()
+        {
+            if output.status.success() {
+                info!("[{}] Exposure: {} → {} (mean brightness: {:.0})",
+                    cam_name, self.current_exposure, new_exposure, mean);
+                self.current_exposure = new_exposure;
+            }
+        }
+    }
+}
+
+/// Compute mean brightness of the center 50% of a JPEG image.
+/// Uses the `image` crate for decoding — fast enough for periodic checks.
+fn mean_brightness_center(jpeg_bytes: &[u8]) -> Option<f64> {
+    use image::ImageFormat;
+
+    let img = image::load_from_memory_with_format(jpeg_bytes, ImageFormat::Jpeg).ok()?;
+    let gray = img.to_luma8();
+    let (w, h) = gray.dimensions();
+
+    // Sample center 50% of the image
+    let x0 = w / 4;
+    let x1 = 3 * w / 4;
+    let y0 = h / 4;
+    let y1 = 3 * h / 4;
+
+    let mut sum: u64 = 0;
+    let mut count: u64 = 0;
+    for y in y0..y1 {
+        for x in x0..x1 {
+            sum += gray.get_pixel(x, y).0[0] as u64;
+            count += 1;
+        }
+    }
+
+    if count == 0 { return None; }
+    Some(sum as f64 / count as f64)
+}
+
+fn flip_jpeg(jpeg_bytes: &[u8], flip_x: bool, flip_y: bool) -> Vec<u8> {
+    use image::ImageFormat;
+    use std::io::Cursor;
+
+    let img = match image::load_from_memory_with_format(jpeg_bytes, ImageFormat::Jpeg) {
+        Ok(img) => img,
+        Err(_) => return jpeg_bytes.to_vec(),
+    };
+
+    let img = if flip_x && flip_y {
+        img.rotate180()
+    } else if flip_x {
+        img.fliph()
+    } else {
+        img.flipv()
+    };
+
+    let mut buf = Cursor::new(Vec::new());
+    if img.write_to(&mut buf, ImageFormat::Jpeg).is_ok() {
+        buf.into_inner()
+    } else {
+        jpeg_bytes.to_vec()
+    }
 }
