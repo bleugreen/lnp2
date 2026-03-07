@@ -13,12 +13,12 @@ use std::sync::Arc;
 use tracing::{info, warn};
 
 use crate::config::CameraConfig;
-use self::error::VisionError;
 use self::ml::{ModelManager, SharedSession};
 
 pub use self::align_part::align_part;
 pub use self::detect_fiducial::detect_fiducial;
 pub use self::detect_pocket::detect_pocket;
+pub use self::error::VisionError;
 pub use self::types::CameraCalibration;
 
 /// Holds loaded ML models and config. Created at startup.

@@ -30,6 +30,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/dataset/capture", post(handlers::dataset_capture))
         .route("/api/dataset/count", get(handlers::dataset_count))
         // Vision endpoints
+        .route("/api/vision/detect_all", post(handlers::vision_detect_all))
         .route("/api/vision/detect_pocket", post(handlers::vision_detect_pocket))
         .route("/api/vision/detect_fiducial", post(handlers::vision_detect_fiducial))
         .route("/api/vision/align_part", post(handlers::vision_align_part))

@@ -378,6 +378,67 @@ pub async fn dataset_count(
 // --- Vision ---
 
 #[derive(Deserialize)]
+pub struct VisionDetectAllRequest {
+    pub camera: String,
+    #[serde(default = "default_detect_all_conf")]
+    pub confidence_threshold: f64,
+}
+
+fn default_detect_all_conf() -> f64 { 0.3 }
+
+pub async fn vision_detect_all(
+    State(state): State<AppState>,
+    Json(req): Json<VisionDetectAllRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let camera = state.camera.as_ref().ok_or_else(|| internal_err("No cameras configured"))?;
+    let jpeg = camera.capture(&req.camera).await.map_err(internal_err)?;
+
+    let vision = state.vision.clone();
+    let camera_name = req.camera.clone();
+    let conf = req.confidence_threshold;
+
+    let config_guard = state.config.read().await;
+    let cam_config = config_guard
+        .cameras
+        .get(&req.camera)
+        .ok_or_else(|| internal_err(format!("Camera '{}' not found", req.camera)))?;
+    let class_names: Vec<String> = cam_config
+        .vision
+        .as_ref()
+        .and_then(|v| v.class_names.clone())
+        .unwrap_or_default();
+    drop(config_guard);
+
+    let result = tokio::task::spawn_blocking(move || {
+        let session = vision.as_ref().and_then(|v| v.session_for(&camera_name));
+        let session = session.ok_or_else(|| crate::vision::VisionError::Other("No model loaded".into()))?;
+        let image = crate::vision::cv::decode_frame(&jpeg)?;
+        let mut ctx = crate::vision::context::VisionContext::new(&crate::vision::types::VisionConfig::default());
+        crate::vision::ml::detect_ml(&image, session, conf, &mut ctx)
+    })
+    .await
+    .map_err(|e| internal_err(e))?
+    .map_err(internal_err)?;
+
+    let detections: Vec<serde_json::Value> = result.iter().map(|b| {
+        let class_name = class_names.get(b.class_id)
+            .cloned()
+            .unwrap_or_else(|| format!("class_{}", b.class_id));
+        serde_json::json!({
+            "class_id": b.class_id,
+            "class_name": class_name,
+            "confidence": b.confidence,
+            "x": b.x,
+            "y": b.y,
+            "width": b.width,
+            "height": b.height,
+        })
+    }).collect();
+
+    Ok(Json(serde_json::json!({ "detections": detections })))
+}
+
+#[derive(Deserialize)]
 pub struct VisionDetectPocketRequest {
     pub camera: String,
     pub expected_width_mm: f64,

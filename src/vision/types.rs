@@ -99,6 +99,9 @@ pub struct VisionConfig {
     pub prefer_ml: bool,
 
     #[serde(default)]
+    pub class_names: Option<Vec<String>>,
+
+    #[serde(default)]
     pub save_diagnostics: bool,
     #[serde(default)]
     pub diagnostics_dir: Option<String>,
@@ -127,6 +130,7 @@ impl Default for VisionConfig {
             model_path: None,
             confidence_threshold: 0.5,
             prefer_ml: true,
+            class_names: None,
             save_diagnostics: false,
             diagnostics_dir: None,
         }

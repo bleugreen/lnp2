@@ -242,6 +242,9 @@ fn iou(a: &BoundingBox, b: &BoundingBox) -> f64 {
 }
 
 /// Run ONNX model inference on a frame.
+/// Supports both output formats:
+/// - Classic YOLOv8: [1, (4+num_classes), 8400] — requires NMS
+/// - YOLO with end-to-end NMS: [1, max_det, 6] — already filtered (x1,y1,x2,y2,conf,class)
 pub fn detect_ml(
     image: &Mat,
     session: &SharedSession,
@@ -255,33 +258,89 @@ pub fn detect_ml(
         image.cols(), image.rows(), scale, pad_x, pad_y
     ));
 
-    // Create an ORT tensor from the ndarray and run inference
     let input_tensor = Tensor::from_array(input)?;
     let inputs = ort::inputs!["images" => input_tensor];
 
     let mut session = session.inner.lock().map_err(|e| VisionError::Other(e.to_string()))?;
     let outputs = session.run(inputs)?;
 
-    // YOLOv8 output: [1, num_attrs, 8400]
     let output_array = outputs[0].try_extract_array::<f32>()?;
+    let shape = output_array.shape();
 
-    // Remove batch dimension: [num_attrs, 8400]
-    let squeezed = output_array.index_axis(Axis(0), 0);
-    let squeezed_2d: ndarray::ArrayView2<f32> = squeezed
-        .into_dimensionality()
-        .map_err(|e| VisionError::Other(format!("Shape error: {}", e)))?;
+    ctx.log(format!("ML: output shape {:?}", shape));
 
-    let boxes = yolo_postprocess(
-        &squeezed_2d,
-        scale,
-        pad_x,
-        pad_y,
-        conf_threshold,
-        0.45,
-    );
+    let boxes = if shape.len() == 3 && shape[2] == 6 {
+        // End-to-end NMS format: [1, max_det, 6] = [x1, y1, x2, y2, conf, class_id]
+        let squeezed = output_array.index_axis(Axis(0), 0);
+        let det_2d: ndarray::ArrayView2<f32> = squeezed
+            .into_dimensionality()
+            .map_err(|e| VisionError::Other(format!("Shape error: {}", e)))?;
+
+        yolo_postprocess_e2e(&det_2d, scale, pad_x, pad_y, conf_threshold)
+    } else if shape.len() == 3 {
+        // Classic YOLOv8: [1, (4+num_classes), 8400]
+        let squeezed = output_array.index_axis(Axis(0), 0);
+        let squeezed_2d: ndarray::ArrayView2<f32> = squeezed
+            .into_dimensionality()
+            .map_err(|e| VisionError::Other(format!("Shape error: {}", e)))?;
+
+        yolo_postprocess(&squeezed_2d, scale, pad_x, pad_y, conf_threshold, 0.45)
+    } else {
+        return Err(VisionError::Other(format!("Unexpected output shape: {:?}", shape)));
+    };
 
     ctx.log(format!("ML: {} detections above {}", boxes.len(), conf_threshold));
     debug!("ML inference: {} detections", boxes.len());
 
     Ok(boxes)
+}
+
+/// Postprocess end-to-end NMS output: [max_det, 6] where each row is [x1, y1, x2, y2, conf, class_id]
+/// Coordinates are in letterbox space, need to convert back to original image coordinates.
+fn yolo_postprocess_e2e(
+    output: &ndarray::ArrayView2<f32>,
+    scale: f64,
+    pad_x: f64,
+    pad_y: f64,
+    conf_threshold: f64,
+) -> Vec<BoundingBox> {
+    let num_dets = output.shape()[0];
+    let mut boxes = Vec::new();
+
+    for i in 0..num_dets {
+        let conf = output[[i, 4]] as f64;
+        if conf < conf_threshold {
+            continue;
+        }
+
+        // x1, y1, x2, y2 in letterbox coordinates
+        let x1 = output[[i, 0]] as f64;
+        let y1 = output[[i, 1]] as f64;
+        let x2 = output[[i, 2]] as f64;
+        let y2 = output[[i, 3]] as f64;
+        let class_id = output[[i, 5]] as usize;
+
+        // Convert from letterbox to original image coordinates
+        let orig_x1 = (x1 - pad_x) / scale;
+        let orig_y1 = (y1 - pad_y) / scale;
+        let orig_x2 = (x2 - pad_x) / scale;
+        let orig_y2 = (y2 - pad_y) / scale;
+
+        let cx = (orig_x1 + orig_x2) / 2.0;
+        let cy = (orig_y1 + orig_y2) / 2.0;
+        let w = orig_x2 - orig_x1;
+        let h = orig_y2 - orig_y1;
+
+        boxes.push(BoundingBox {
+            x: cx,
+            y: cy,
+            width: w,
+            height: h,
+            confidence: conf,
+            class_id,
+            angle: None,
+        });
+    }
+
+    boxes
 }

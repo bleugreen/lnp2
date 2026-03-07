@@ -80,6 +80,12 @@ default_z = 15.0
 flip_x = true
 flip_y = true
 
+[cameras.top.vision]
+model_path = "/home/bleu/models/feeder-v1.onnx"
+prefer_ml = true
+confidence_threshold = 0.3
+class_names = ["pocket", "pocket_with_part", "sprocket"]
+
 [cameras.bottom]
 device = "/dev/video2"
 width = 1280

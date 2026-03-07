@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { createCameraSocket } from '../lib/websocket.js';
   import { position, jogFeedrate } from '../lib/stores.js';
-  import { moveTo, getCameraList, detectPocket, detectFiducial, datasetCapture, datasetCount } from '../lib/api.js';
+  import { moveTo, getCameraList, detectAll, datasetCapture, datasetCount } from '../lib/api.js';
 
   let canvas;
   let ctx;
@@ -13,13 +13,27 @@
   let width = $state(1280);
   let height = $state(720);
 
-  // Vision overlay state
-  let detection = $state(null);
-  let detecting = $state(false);
+  // ML overlay state
+  let detections = $state([]);
+  let mlEnabled = $state(false);
+  let mlInterval = null;
+  let mlBusy = false;
 
   // Dataset capture state
   let captureCount = $state(0);
   let captureFlash = $state(false);
+
+  // Class colors for overlay
+  const CLASS_COLORS = [
+    '#e94560', // red-pink
+    '#00d4aa', // teal
+    '#ffa726', // orange
+    '#42a5f5', // blue
+    '#ab47bc', // purple
+    '#66bb6a', // green
+    '#ef5350', // red
+    '#26c6da', // cyan
+  ];
 
   onMount(async () => {
     ctx = canvas.getContext('2d');
@@ -40,6 +54,7 @@
 
   onDestroy(() => {
     if (socket) socket.destroy();
+    stopMl();
   });
 
   function connectCamera() {
@@ -59,7 +74,7 @@
         canvas.height = bitmap.height;
         ctx.drawImage(bitmap, 0, 0);
         drawCrosshair(bitmap.width, bitmap.height);
-        drawDetection();
+        drawDetections();
       });
     });
   }
@@ -71,75 +86,85 @@
     ctx.strokeStyle = 'rgba(0, 255, 0, 0.6)';
     ctx.lineWidth = 1;
 
-    // Horizontal line
     ctx.beginPath();
     ctx.moveTo(0, cy);
     ctx.lineTo(w, cy);
     ctx.stroke();
 
-    // Vertical line
     ctx.beginPath();
     ctx.moveTo(cx, 0);
     ctx.lineTo(cx, h);
     ctx.stroke();
 
-    // Center circle
     ctx.beginPath();
     ctx.arc(cx, cy, 20, 0, Math.PI * 2);
     ctx.stroke();
   }
 
-  function drawDetection() {
-    if (!detection) return;
+  function drawDetections() {
+    if (!detections.length) return;
 
-    const d = detection;
-    const r = d.region_px;
+    for (const d of detections) {
+      const color = CLASS_COLORS[d.class_id % CLASS_COLORS.length];
+      const x = d.x - d.width / 2;
+      const y = d.y - d.height / 2;
 
-    // Draw bounding region if we have pixel coords
-    if (r) {
-      ctx.save();
-      ctx.translate(r.x, r.y);
-      if (r.rotation_deg) ctx.rotate(r.rotation_deg * Math.PI / 180);
-
-      // Filled rect with transparency
-      ctx.fillStyle = 'rgba(230, 70, 70, 0.15)';
-      ctx.fillRect(-r.width / 2, -r.height / 2, r.width, r.height);
+      // Filled rect
+      ctx.fillStyle = color + '22';
+      ctx.fillRect(x, y, d.width, d.height);
 
       // Border
-      ctx.strokeStyle = '#e94560';
+      ctx.strokeStyle = color;
       ctx.lineWidth = 2;
-      ctx.strokeRect(-r.width / 2, -r.height / 2, r.width, r.height);
+      ctx.strokeRect(x, y, d.width, d.height);
 
-      ctx.restore();
+      // Label background
+      const label = `${d.class_name} ${(d.confidence * 100).toFixed(0)}%`;
+      ctx.font = 'bold 13px monospace';
+      const tw = ctx.measureText(label).width;
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+      ctx.fillRect(x, y - 18, tw + 8, 18);
 
-      // Crosshair at detection center
-      ctx.strokeStyle = '#e94560';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(r.x - 12, r.y);
-      ctx.lineTo(r.x + 12, r.y);
-      ctx.moveTo(r.x, r.y - 12);
-      ctx.lineTo(r.x, r.y + 12);
-      ctx.stroke();
+      // Label text
+      ctx.fillStyle = color;
+      ctx.fillText(label, x + 4, y - 4);
     }
+  }
 
-    // Info label
-    const method = typeof d.method === 'string' ? d.method : Object.keys(d.method)[0];
-    const conf = (d.confidence * 100).toFixed(1);
-    const ox = d.offset_x_mm.toFixed(3);
-    const oy = d.offset_y_mm.toFixed(3);
+  function toggleMl() {
+    mlEnabled = !mlEnabled;
+    if (mlEnabled) {
+      startMl();
+    } else {
+      stopMl();
+    }
+  }
 
-    const labelX = r ? r.x + r.width / 2 + 8 : 10;
-    const labelY = r ? r.y - r.height / 2 : 20;
+  function startMl() {
+    if (mlInterval) return;
+    runMl(); // Run immediately
+    mlInterval = setInterval(runMl, 500); // Then every 500ms
+  }
 
-    ctx.font = '13px monospace';
-    // Shadow for readability
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-    ctx.fillRect(labelX - 4, labelY - 14, 200, 38);
-    ctx.fillStyle = '#e94560';
-    ctx.fillText(`${method}  ${conf}%`, labelX, labelY);
-    ctx.fillStyle = '#ccc';
-    ctx.fillText(`Δ ${ox}, ${oy} mm`, labelX, labelY + 16);
+  function stopMl() {
+    if (mlInterval) {
+      clearInterval(mlInterval);
+      mlInterval = null;
+    }
+    detections = [];
+  }
+
+  async function runMl() {
+    if (mlBusy) return;
+    mlBusy = true;
+    try {
+      const result = await detectAll(selectedCamera);
+      detections = result.detections || [];
+    } catch {
+      // Model not loaded or other error — silently ignore
+    } finally {
+      mlBusy = false;
+    }
   }
 
   async function capture() {
@@ -150,25 +175,6 @@
       setTimeout(() => captureFlash = false, 300);
     } catch (e) {
       console.error('Capture failed:', e);
-    }
-  }
-
-  async function runDetect(type) {
-    detecting = true;
-    detection = null;
-    try {
-      let result;
-      if (type === 'pocket') {
-        result = await detectPocket(selectedCamera, 8.0, 4.0);
-        detection = result.detection;
-      } else if (type === 'fiducial') {
-        result = await detectFiducial(selectedCamera);
-        detection = result.detection;
-      }
-    } catch (e) {
-      console.error('Detection failed:', e);
-    } finally {
-      detecting = false;
     }
   }
 
@@ -193,14 +199,14 @@
     position.subscribe((p) => (pos = p))();
 
     const targetX = pos.x + offsetX;
-    const targetY = pos.y - offsetY; // Y is inverted (screen Y down, machine Y up)
+    const targetY = pos.y - offsetY;
 
     moveTo(targetX, targetY, undefined, $jogFeedrate).catch(console.error);
   }
 
   function switchCamera(name) {
     selectedCamera = name;
-    detection = null;
+    detections = [];
     connectCamera();
   }
 </script>
@@ -220,15 +226,13 @@
       </div>
     {/if}
     <div class="vision-controls">
-      <button onclick={() => runDetect('pocket')} disabled={detecting}>
-        {detecting ? '...' : 'Detect Pocket'}
+      <button
+        class:active={mlEnabled}
+        class="ml-toggle"
+        onclick={toggleMl}
+      >
+        {mlEnabled ? 'ML On' : 'ML Off'}
       </button>
-      <button onclick={() => runDetect('fiducial')} disabled={detecting}>
-        {detecting ? '...' : 'Detect Fid'}
-      </button>
-      {#if detection}
-        <button class="clear" onclick={() => detection = null}>Clear</button>
-      {/if}
       <span class="separator"></span>
       <button class="capture" onclick={capture}>
         Capture
@@ -286,6 +290,7 @@
   .vision-controls {
     display: flex;
     gap: 0.5rem;
+    align-items: center;
   }
 
   .vision-controls button {
@@ -302,15 +307,14 @@
     background: #3a3a5e;
   }
 
-  .vision-controls button:disabled {
-    opacity: 0.5;
-    cursor: wait;
+  .vision-controls button.ml-toggle {
+    border-color: #555;
   }
 
-  .vision-controls button.clear {
-    background: transparent;
-    border-color: #e94560;
-    color: #e94560;
+  .vision-controls button.ml-toggle.active {
+    background: #1a6b3a;
+    border-color: #2ecc71;
+    color: #2ecc71;
   }
 
   .vision-controls .separator {

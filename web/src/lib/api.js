@@ -73,6 +73,13 @@ export async function datasetCount() {
 
 // --- Vision ---
 
+export async function detectAll(camera, confidenceThreshold = 0.3) {
+  return request('POST', '/api/vision/detect_all', {
+    camera,
+    confidence_threshold: confidenceThreshold,
+  });
+}
+
 export async function detectPocket(camera, expectedWidthMm, expectedHeightMm) {
   return request('POST', '/api/vision/detect_pocket', {
     camera,
