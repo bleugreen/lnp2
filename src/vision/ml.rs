@@ -75,14 +75,17 @@ impl ModelManager {
     }
 }
 
-/// Preprocess a Mat for YOLOv8 inference.
+/// Preprocess a Mat for YOLOv8 inference into a pre-allocated buffer.
 /// - Letterbox resize to 640x640
 /// - BGR → RGB
 /// - Normalize to 0.0–1.0
-/// - Reshape to [1, 3, 640, 640]
+/// - Fill buffer shaped [1, 3, 640, 640]
 ///
-/// Returns (tensor_array, scale, pad_x, pad_y).
-pub fn yolo_preprocess(image: &Mat) -> Result<(Array4<f32>, f64, f64, f64), VisionError> {
+/// Returns (scale, pad_x, pad_y).
+pub fn yolo_preprocess_into(
+    image: &Mat,
+    buffer: &mut Array4<f32>,
+) -> Result<(f64, f64, f64), VisionError> {
     let orig_h = image.rows() as f64;
     let orig_w = image.cols() as f64;
     let target = 640.0;
@@ -111,18 +114,21 @@ pub fn yolo_preprocess(image: &Mat) -> Result<(Array4<f32>, f64, f64, f64), Visi
     let mut rgb = Mat::default();
     imgproc::cvt_color_def(&padded, &mut rgb, imgproc::COLOR_BGR2RGB)?;
 
-    // Mat to Array4<f32> [1, 3, 640, 640] normalized
-    let mut array = Array4::<f32>::zeros((1, 3, 640, 640));
+    // Bulk pixel copy: use data_bytes() instead of per-pixel at_2d() bounds checks.
+    // All 640x640 pixels are written from the padded Mat (which includes gray border).
+    let data = rgb.data_bytes()?;
+    let step = rgb.mat_step().get(0) as usize;
     for y in 0..640usize {
+        let row = &data[y * step..y * step + 640 * 3];
         for x in 0..640usize {
-            let pixel: &opencv::core::Vec3b = rgb.at_2d(y as i32, x as i32)?;
-            array[[0, 0, y, x]] = pixel[0] as f32 / 255.0; // R
-            array[[0, 1, y, x]] = pixel[1] as f32 / 255.0; // G
-            array[[0, 2, y, x]] = pixel[2] as f32 / 255.0; // B
+            let offset = x * 3;
+            buffer[[0, 0, y, x]] = row[offset] as f32 / 255.0;     // R
+            buffer[[0, 1, y, x]] = row[offset + 1] as f32 / 255.0; // G
+            buffer[[0, 2, y, x]] = row[offset + 2] as f32 / 255.0; // B
         }
     }
 
-    Ok((array, scale, pad_x, pad_y))
+    Ok((scale, pad_x, pad_y))
 }
 
 /// Postprocess YOLOv8 output tensor.
@@ -251,7 +257,8 @@ pub fn detect_ml(
     conf_threshold: f64,
     ctx: &mut VisionContext,
 ) -> Result<Vec<BoundingBox>, VisionError> {
-    let (input, scale, pad_x, pad_y) = yolo_preprocess(image)?;
+    let mut input = Array4::<f32>::zeros((1, 3, 640, 640));
+    let (scale, pad_x, pad_y) = yolo_preprocess_into(image, &mut input)?;
 
     ctx.log(format!(
         "ML: preprocessed {}x{} → 640x640 (scale={:.3}, pad=({:.0},{:.0}))",

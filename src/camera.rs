@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use bytes::Bytes;
 use tokio::sync::{broadcast, RwLock};
 use tokio::task::JoinHandle;
 use tracing::{error, info, warn};
@@ -23,8 +24,8 @@ pub struct CameraManager {
 
 struct CameraHandle {
     config: CameraConfig,
-    latest_frame: Arc<RwLock<Option<Vec<u8>>>>,
-    broadcast_tx: broadcast::Sender<Vec<u8>>,
+    latest_frame: Arc<RwLock<Option<Bytes>>>,
+    broadcast_tx: broadcast::Sender<Bytes>,
     _task: JoinHandle<()>,
 }
 
@@ -34,7 +35,7 @@ impl CameraManager {
 
         for (name, config) in cameras {
             let (broadcast_tx, _) = broadcast::channel(4); // small buffer, drop old frames
-            let latest_frame: Arc<RwLock<Option<Vec<u8>>>> = Arc::new(RwLock::new(None));
+            let latest_frame: Arc<RwLock<Option<Bytes>>> = Arc::new(RwLock::new(None));
 
             let frame_ref = latest_frame.clone();
             let tx = broadcast_tx.clone();
@@ -64,14 +65,14 @@ impl CameraManager {
     }
 
     /// Get latest captured frame (JPEG bytes).
-    pub async fn capture(&self, name: &str) -> Result<Vec<u8>, CameraError> {
+    pub async fn capture(&self, name: &str) -> Result<Bytes, CameraError> {
         let handle = self.cameras.get(name).ok_or_else(|| CameraError::NotFound(name.to_string()))?;
         let frame = handle.latest_frame.read().await;
         frame.clone().ok_or(CameraError::NoFrame)
     }
 
     /// Subscribe to live frame stream.
-    pub fn subscribe(&self, name: &str) -> Result<broadcast::Receiver<Vec<u8>>, CameraError> {
+    pub fn subscribe(&self, name: &str) -> Result<broadcast::Receiver<Bytes>, CameraError> {
         let handle = self.cameras.get(name).ok_or_else(|| CameraError::NotFound(name.to_string()))?;
         Ok(handle.broadcast_tx.subscribe())
     }
@@ -97,8 +98,8 @@ fn capture_loop(
     height: u32,
     flip_x: bool,
     flip_y: bool,
-    latest_frame: Arc<RwLock<Option<Vec<u8>>>>,
-    broadcast_tx: broadcast::Sender<Vec<u8>>,
+    latest_frame: Arc<RwLock<Option<Bytes>>>,
+    broadcast_tx: broadcast::Sender<Bytes>,
 ) {
     use nokhwa::pixel_format::RgbFormat;
     use nokhwa::utils::{CameraFormat, CameraIndex, FrameFormat, RequestedFormat, RequestedFormatType, Resolution};
@@ -151,7 +152,7 @@ fn capture_loop(
     loop {
         match camera.frame_raw() {
             Ok(raw_bytes) => {
-                let jpeg = if flip_x || flip_y {
+                let jpeg_vec = if flip_x || flip_y {
                     flip_jpeg(&raw_bytes, flip_x, flip_y)
                 } else {
                     raw_bytes.to_vec()
@@ -161,14 +162,16 @@ fn capture_loop(
                 if auto_exp.available {
                     frame_count += 1;
                     if frame_count % 5 == 0 {
-                        auto_exp.adjust(&jpeg, name);
+                        auto_exp.adjust(&jpeg_vec, name);
                     }
                 }
 
+                // Bytes: Arc-backed, cheap clone for broadcast + latest_frame
+                let jpeg = Bytes::from(jpeg_vec);
+                let _ = broadcast_tx.send(jpeg.clone());
                 if let Ok(mut frame) = latest_frame.try_write() {
-                    *frame = Some(jpeg.clone());
+                    *frame = Some(jpeg);
                 }
-                let _ = broadcast_tx.send(jpeg);
             }
             Err(e) => {
                 error!("[{}] Frame capture error: {}", name, e);
@@ -293,7 +296,28 @@ fn mean_brightness_center(jpeg_bytes: &[u8]) -> Option<f64> {
     Some(sum as f64 / count as f64)
 }
 
+/// Lossless JPEG flip via turbojpeg (operates in DCT domain, no pixel decode/re-encode).
+/// Falls back to pixel-based flip if turbojpeg transform fails.
 fn flip_jpeg(jpeg_bytes: &[u8], flip_x: bool, flip_y: bool) -> Vec<u8> {
+    let op = match (flip_x, flip_y) {
+        (true, true) => turbojpeg::TransformOp::Rot180,
+        (true, false) => turbojpeg::TransformOp::Hflip,
+        (false, true) => turbojpeg::TransformOp::Vflip,
+        (false, false) => return jpeg_bytes.to_vec(),
+    };
+
+    let transform = turbojpeg::Transform::op(op);
+    match turbojpeg::transform(&transform, jpeg_bytes) {
+        Ok(buf) => buf.to_vec(),
+        Err(e) => {
+            warn!("turbojpeg transform failed, falling back to pixel flip: {}", e);
+            flip_jpeg_fallback(jpeg_bytes, flip_x, flip_y)
+        }
+    }
+}
+
+/// Fallback pixel-based JPEG flip (decode → transform → re-encode).
+fn flip_jpeg_fallback(jpeg_bytes: &[u8], flip_x: bool, flip_y: bool) -> Vec<u8> {
     use image::ImageFormat;
     use std::io::Cursor;
 

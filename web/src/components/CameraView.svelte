@@ -16,8 +16,10 @@
   // ML overlay state
   let detections = $state([]);
   let mlEnabled = $state(false);
-  let mlInterval = null;
-  let mlBusy = false;
+  let mlTimeout = null;
+
+  // Frame rendering gate — drop frames if still rendering previous
+  let rendering = false;
 
   // Dataset capture state
   let captureCount = $state(0);
@@ -67,15 +69,21 @@
     }
 
     socket = createCameraSocket(selectedCamera, (frameData) => {
+      if (rendering) return; // Drop frame if still rendering previous
+      rendering = true;
       const blob = new Blob([frameData], { type: 'image/jpeg' });
       createImageBitmap(blob).then((bitmap) => {
-        if (!ctx) return;
-        canvas.width = bitmap.width;
-        canvas.height = bitmap.height;
+        if (!ctx) { bitmap.close(); rendering = false; return; }
+        const w = bitmap.width;
+        const h = bitmap.height;
+        canvas.width = w;
+        canvas.height = h;
         ctx.drawImage(bitmap, 0, 0);
-        drawCrosshair(bitmap.width, bitmap.height);
+        bitmap.close(); // Release GPU memory
+        drawCrosshair(w, h);
         drawDetections();
-      });
+        rendering = false;
+      }).catch(() => { rendering = false; });
     });
   }
 
@@ -141,30 +149,29 @@
   }
 
   function startMl() {
-    if (mlInterval) return;
-    runMl(); // Run immediately
-    mlInterval = setInterval(runMl, 500); // Then every 500ms
+    if (mlTimeout) return;
+    scheduleMl();
+  }
+
+  function scheduleMl() {
+    if (!mlEnabled) return;
+    mlTimeout = setTimeout(async () => {
+      try {
+        const result = await detectAll(selectedCamera);
+        detections = result.detections || [];
+      } catch {
+        // Model not loaded or other error — silently ignore
+      }
+      scheduleMl(); // Schedule next after completion
+    }, 500);
   }
 
   function stopMl() {
-    if (mlInterval) {
-      clearInterval(mlInterval);
-      mlInterval = null;
+    if (mlTimeout) {
+      clearTimeout(mlTimeout);
+      mlTimeout = null;
     }
     detections = [];
-  }
-
-  async function runMl() {
-    if (mlBusy) return;
-    mlBusy = true;
-    try {
-      const result = await detectAll(selectedCamera);
-      detections = result.detections || [];
-    } catch {
-      // Model not loaded or other error — silently ignore
-    } finally {
-      mlBusy = false;
-    }
   }
 
   async function capture() {

@@ -1,13 +1,12 @@
 # lnp2
 
-
 Rust PnP machine controller for LumenPnP. Replaces OpenPnP with a single binary that owns serial, motion, actuators, and serves an HTTP API.
 
 ## Quick Start
 
 ```bash
 cargo build --release
-./target/release/rsrvpnp config/machine.toml
+./target/release/lnp2 config/machine.toml
 ```
 
 The server starts on `0.0.0.0:3000`.

@@ -22,7 +22,7 @@
 
 <div class="app">
   <header>
-    <h1>rsrvpnp</h1>
+    <h1>lnp2</h1>
     <span class="status" class:online={$connected}>
       {$connected ? 'Connected' : 'Disconnected'}
     </span>

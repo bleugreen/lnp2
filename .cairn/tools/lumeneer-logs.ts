@@ -1,6 +1,6 @@
 export const name = "Lumeneer server logs";
 export const description =
-  "View recent rsrvpnp server logs from lumeneer.local. " +
+  "View recent lnp2 server logs from lumeneer.local. " +
   "Useful for debugging after deploy or checking runtime errors.";
 
 export const inputSchema = {
@@ -23,7 +23,7 @@ export default async function ({ inputs }) {
   const lines = inputs.lines ?? 30;
   const filter = inputs.filter;
 
-  let cmd = `tail -${lines} /tmp/rsrvpnp.log`;
+  let cmd = `tail -${lines} /tmp/lnp2.log`;
   if (filter) {
     cmd += ` | grep -i '${filter}'`;
   }

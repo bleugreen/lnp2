@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Export a YOLOv8 .pt model to ONNX format for rsrvpnp vision pipeline.
+"""Export a YOLOv8 .pt model to ONNX format for lnp2 vision pipeline.
 
 Usage:
     python scripts/export_model.py --weights path/to/best.pt --output models/custom.onnx

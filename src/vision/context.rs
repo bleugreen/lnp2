@@ -20,7 +20,7 @@ impl VisionContext {
             let dir = config
                 .diagnostics_dir
                 .as_deref()
-                .unwrap_or("/tmp/rsrvpnp-vision");
+                .unwrap_or("/tmp/lnp2-vision");
             let timestamp = chrono_timestamp();
             Some(PathBuf::from(dir).join(timestamp))
         } else {

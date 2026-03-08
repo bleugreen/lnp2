@@ -18,7 +18,7 @@ export const inputSchema = {
 };
 
 const SSH = "bleu@lumeneer.local";
-const REMOTE = "~/rsrvpnp";
+const REMOTE = "~/lnp2";
 
 function ssh(cmd: string, timeout = 120_000) {
   const r = Bun.spawnSync(["ssh", SSH, cmd], {
@@ -81,16 +81,16 @@ export default async function ({ inputs, CWD }) {
     steps.push("Built Rust binary");
 
     // 4. Restart server
-    ssh("pkill -9 -f 'rsrvpnp serve' 2>/dev/null", 5_000);
+    ssh("pkill -9 -f 'lnp2 serve' 2>/dev/null", 5_000);
     await new Promise((r) => setTimeout(r, 2000));
 
     ssh(
-      `nohup bash -c 'cd ${REMOTE} && exec ./target/release/rsrvpnp serve --config config' > /tmp/rsrvpnp.log 2>&1 & disown; echo started`,
+      `nohup bash -c 'cd ${REMOTE} && exec ./target/release/lnp2 serve --config config' > /tmp/lnp2.log 2>&1 & disown; echo started`,
       8_000
     );
     await new Promise((r) => setTimeout(r, 3000));
 
-    const log = ssh("tail -5 /tmp/rsrvpnp.log", 5_000);
+    const log = ssh("tail -5 /tmp/lnp2.log", 5_000);
     const listening = log.stdout.includes("Listening on");
     steps.push(listening ? "Server restarted and listening" : "Server started (check log)");
   } else {

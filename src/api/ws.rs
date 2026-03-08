@@ -2,6 +2,8 @@ use axum::extract::ws::{Message, WebSocket};
 use axum::extract::{Query, State, WebSocketUpgrade};
 use axum::response::IntoResponse;
 use serde::Deserialize;
+use tokio::sync::broadcast::error::RecvError;
+use tokio::time::{timeout, Duration};
 use tracing::debug;
 
 use crate::state::AppState;
@@ -36,9 +38,20 @@ async fn handle_camera_stream(mut socket: WebSocket, state: AppState, name: Stri
         }
     };
 
-    while let Ok(frame) = rx.recv().await {
-        if socket.send(Message::Binary(frame.into())).await.is_err() {
-            break;
+    loop {
+        match rx.recv().await {
+            Ok(frame) => {
+                // Timeout on send so a stalled client doesn't block indefinitely
+                match timeout(Duration::from_secs(1), socket.send(Message::Binary(frame))).await {
+                    Ok(Ok(())) => {}
+                    _ => break, // Send failed or timed out
+                }
+            }
+            Err(RecvError::Lagged(n)) => {
+                debug!("[{}] Client lagged, skipped {} frames", name, n);
+                continue; // Skip to latest frame
+            }
+            Err(RecvError::Closed) => break,
         }
     }
 }

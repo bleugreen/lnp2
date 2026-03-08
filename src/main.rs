@@ -22,7 +22,7 @@ use crate::photon::PhotonBus;
 use crate::state::AppState;
 
 #[derive(Parser)]
-#[command(name = "rsrvpnp", about = "Pick and place machine controller")]
+#[command(name = "lnp2", about = "Pick and place machine controller")]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,

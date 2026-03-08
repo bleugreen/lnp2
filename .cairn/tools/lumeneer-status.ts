@@ -1,6 +1,6 @@
 export const name = "Lumeneer server status";
 export const description =
-  "Check if rsrvpnp is running on lumeneer.local and test basic connectivity.";
+  "Check if lnp2 is running on lumeneer.local and test basic connectivity.";
 
 const SSH = "bleu@lumeneer.local";
 
@@ -17,7 +17,7 @@ export default async function () {
   const lines: string[] = [];
 
   // Check process
-  const proc = ssh("ps aux | grep 'rsrvpnp serve' | grep -v grep");
+  const proc = ssh("ps aux | grep 'lnp2 serve' | grep -v grep");
   if (proc.ok && proc.stdout) {
     lines.push("Process: running");
     // Extract PID and CPU
@@ -39,7 +39,7 @@ export default async function () {
   }
 
   // Uptime (from log start)
-  const logStart = ssh("head -1 /tmp/rsrvpnp.log | grep -oP '\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}'");
+  const logStart = ssh("head -1 /tmp/lnp2.log | grep -oP '\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}'");
   if (logStart.ok && logStart.stdout) {
     lines.push(`Started: ${logStart.stdout}`);
   }
