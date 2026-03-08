@@ -1,4 +1,6 @@
+pub mod boards;
 pub mod feeders;
+pub mod jobs;
 pub mod nozzle_tips;
 pub mod parts;
 
@@ -7,7 +9,9 @@ use std::collections::HashMap;
 use std::path::Path;
 use tracing::{info, warn};
 
+pub use boards::{BoardConfig, BoardSide, FiducialConfig, PlacementConfig};
 pub use feeders::{FeederConfig, FeedersFile};
+pub use jobs::{BoardOrigin, JobBoard, JobConfig};
 pub use nozzle_tips::{NozzleTipConfig, NozzleTipsFile};
 pub use parts::{PackageConfig, PackagesFile, PartConfig, PartsFile};
 
@@ -114,6 +118,8 @@ pub struct FullConfig {
     pub parts: HashMap<String, PartConfig>,
     pub packages: HashMap<String, PackageConfig>,
     pub nozzle_tips: HashMap<String, NozzleTipConfig>,
+    pub boards: HashMap<String, BoardConfig>,
+    pub jobs: HashMap<String, JobConfig>,
 }
 
 pub fn save_config(path: &Path, config: &MachineConfig) -> Result<(), Box<dyn std::error::Error>> {
@@ -149,12 +155,17 @@ pub fn load_full_config(config_dir: &Path) -> Result<FullConfig, Box<dyn std::er
         .map(|f| f.tips)
         .unwrap_or_default();
 
+    let boards = load_directory::<BoardConfig>(&config_dir.join("boards"));
+    let jobs = load_directory::<JobConfig>(&config_dir.join("jobs"));
+
     info!(
-        "Loaded config: {} feeders, {} parts, {} packages, {} nozzle tips",
+        "Loaded config: {} feeders, {} parts, {} packages, {} nozzle tips, {} boards, {} jobs",
         feeders.len(),
         parts.len(),
         packages.len(),
-        nozzle_tips.len()
+        nozzle_tips.len(),
+        boards.len(),
+        jobs.len(),
     );
 
     Ok(FullConfig {
@@ -163,7 +174,59 @@ pub fn load_full_config(config_dir: &Path) -> Result<FullConfig, Box<dyn std::er
         parts,
         packages,
         nozzle_tips,
+        boards,
+        jobs,
     })
+}
+
+/// Trait for config types that have a `name` field used as the map key.
+pub trait Named {
+    fn config_name(&self) -> &str;
+}
+
+impl Named for BoardConfig {
+    fn config_name(&self) -> &str {
+        &self.name
+    }
+}
+
+impl Named for JobConfig {
+    fn config_name(&self) -> &str {
+        &self.name
+    }
+}
+
+/// Load all TOML files from a directory into a HashMap keyed by the `name` field.
+fn load_directory<T: serde::de::DeserializeOwned + Named>(dir: &Path) -> HashMap<String, T> {
+    let mut map = HashMap::new();
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return map, // directory doesn't exist yet — fine
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("toml") {
+            continue;
+        }
+        match std::fs::read_to_string(&path) {
+            Ok(content) => match toml::from_str::<T>(&content) {
+                Ok(item) => {
+                    let name = item.config_name().to_string();
+                    info!("Loaded {}: {}", path.display(), name);
+                    map.insert(name, item);
+                }
+                Err(e) => {
+                    warn!("Failed to parse {}: {}", path.display(), e);
+                }
+            },
+            Err(e) => {
+                warn!("Failed to read {}: {}", path.display(), e);
+            }
+        }
+    }
+
+    map
 }
 
 fn load_optional<T: serde::de::DeserializeOwned>(
