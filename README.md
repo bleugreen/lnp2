@@ -1,5 +1,7 @@
 # lnp2
 
+    Look N Pick N Look N Place
+
 Rust PnP machine controller for LumenPnP. Replaces OpenPnP with a single binary that owns serial, motion, actuators, and serves an HTTP API.
 
 ## Quick Start
