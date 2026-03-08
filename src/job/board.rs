@@ -187,16 +187,16 @@ pub fn compute_transform_3pt(
     let inv_det = 1.0 / det;
 
     // Solve for a, b, tx (maps x,y → u)
-    let a = ((u0 * (y1 - y2) - u1 * (y0 - y2) + u2 * (y0 - y1)) * inv_det);
-    let b = ((x0 * (u1 - u2) - x1 * (u0 - u2) + x2 * (u0 - u1)) * inv_det);
-    let tx = ((x0 * (y1 * u2 - y2 * u1) - x1 * (y0 * u2 - y2 * u0) + x2 * (y0 * u1 - y1 * u0))
-        * inv_det);
+    let a = (u0 * (y1 - y2) - u1 * (y0 - y2) + u2 * (y0 - y1)) * inv_det;
+    let b = (x0 * (u1 - u2) - x1 * (u0 - u2) + x2 * (u0 - u1)) * inv_det;
+    let tx = (x0 * (y1 * u2 - y2 * u1) - x1 * (y0 * u2 - y2 * u0) + x2 * (y0 * u1 - y1 * u0))
+        * inv_det;
 
     // Solve for c, d, ty (maps x,y → v)
-    let c = ((v0 * (y1 - y2) - v1 * (y0 - y2) + v2 * (y0 - y1)) * inv_det);
-    let d = ((x0 * (v1 - v2) - x1 * (v0 - v2) + x2 * (v0 - v1)) * inv_det);
-    let ty = ((x0 * (y1 * v2 - y2 * v1) - x1 * (y0 * v2 - y2 * v0) + x2 * (y0 * v1 - y1 * v0))
-        * inv_det);
+    let c = (v0 * (y1 - y2) - v1 * (y0 - y2) + v2 * (y0 - y1)) * inv_det;
+    let d = (x0 * (v1 - v2) - x1 * (v0 - v2) + x2 * (v0 - v1)) * inv_det;
+    let ty = (x0 * (y1 * v2 - y2 * v1) - x1 * (y0 * v2 - y2 * v0) + x2 * (y0 * v1 - y1 * v0))
+        * inv_det;
 
     AffineTransform {
         a,
