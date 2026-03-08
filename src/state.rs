@@ -8,6 +8,7 @@ use crate::camera::CameraManager;
 use crate::config::{FullConfig, MachineConfig};
 use crate::events::EventBus;
 use crate::gcode::GCodeDriver;
+use crate::job::JobHandle;
 use crate::motion::MotionController;
 use crate::vision::VisionEngine;
 
@@ -22,6 +23,7 @@ pub struct AppState {
     pub vision: Option<Arc<VisionEngine>>,
     pub event_bus: Arc<EventBus>,
     pub config_dir: PathBuf,
+    pub active_job: Arc<RwLock<Option<JobHandle>>>,
 }
 
 impl AppState {
@@ -47,6 +49,7 @@ impl AppState {
             vision: vision.map(Arc::new),
             event_bus: Arc::new(event_bus),
             config_dir,
+            active_job: Arc::new(RwLock::new(None)),
         }
     }
 }
