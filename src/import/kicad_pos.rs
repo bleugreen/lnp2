@@ -122,7 +122,7 @@ pub fn parse_csv(content: &str) -> Result<ImportResult, ImportError> {
             let h_lower = h.trim_matches('"').to_lowercase();
             match h_lower.as_str() {
                 "ref" => col_ref = i,
-                "val" | "value" => col_val = i,
+                "val" | "value" => _col_val = i,
                 "package" | "footprint" => col_package = i,
                 "posx" | "pos x" | "x" => col_x = i,
                 "posy" | "pos y" | "y" => col_y = i,
