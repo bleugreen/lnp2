@@ -41,19 +41,17 @@
 <div class="calibration">
   <button class="cal-toggle" onclick={() => expanded = !expanded}>
     {expanded ? '▾' : '▸'} Calibration
-    <span class="cal-summary">
-      {config ? `${config.upp_x?.toFixed(4)} × ${config.upp_y?.toFixed(4)} mm/px` : ''}
-    </span>
+    {#if config}
+      <span class="cal-summary">
+        {config.upp_x?.toFixed(4)} × {config.upp_y?.toFixed(4)} mm/px
+        &nbsp;|&nbsp;
+        {(config.upp_x * config.width).toFixed(1)} × {(config.upp_y * config.height).toFixed(1)} mm
+      </span>
+    {/if}
   </button>
 
   {#if expanded}
     <div class="cal-panel">
-      {#if config}
-        <div class="cal-info">
-          <span>UPP: {config.upp_x?.toFixed(4)} × {config.upp_y?.toFixed(4)} mm/px</span>
-          <span>FOV: {(config.upp_x * config.width).toFixed(1)} × {(config.upp_y * config.height).toFixed(1)} mm</span>
-        </div>
-      {/if}
       <div class="cal-row">
         <span class="field-label">Flip X</span>
         <button
