@@ -1,6 +1,6 @@
 use std::sync::atomic::Ordering;
 
-use axum::extract::{Query, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::Json;
@@ -304,7 +304,7 @@ pub async fn camera_list(
 ) -> Json<serde_json::Value> {
     match &state.camera {
         Some(camera) => {
-            let configs = camera.configs();
+            let configs = camera.configs().await;
             Json(serde_json::json!({
                 "cameras": configs.keys().collect::<Vec<_>>(),
                 "configs": configs
@@ -312,6 +312,55 @@ pub async fn camera_list(
         }
         None => Json(serde_json::json!({ "cameras": [], "configs": {} })),
     }
+}
+
+// --- Camera Config Update ---
+
+#[derive(Deserialize)]
+pub struct CameraConfigUpdate {
+    pub upp_x: Option<f64>,
+    pub upp_y: Option<f64>,
+    pub flip_x: Option<bool>,
+    pub flip_y: Option<bool>,
+}
+
+pub async fn update_camera_config(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Json(update): Json<CameraConfigUpdate>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    // Update MachineConfig in memory
+    let updated_cam_config = {
+        let mut config = state.config.write().await;
+        let cam_config = config
+            .cameras
+            .get_mut(&name)
+            .ok_or_else(|| internal_err(format!("Camera '{}' not found", name)))?;
+
+        if let Some(v) = update.upp_x { cam_config.upp_x = v; }
+        if let Some(v) = update.upp_y { cam_config.upp_y = v; }
+        if let Some(v) = update.flip_x { cam_config.flip_x = v; }
+        if let Some(v) = update.flip_y { cam_config.flip_y = v; }
+
+        cam_config.clone()
+    };
+
+    // Propagate to CameraManager so configs() returns fresh values
+    if let Some(ref camera) = state.camera {
+        camera
+            .update_config(&name, updated_cam_config.clone())
+            .await
+            .map_err(internal_err)?;
+    }
+
+    // Persist to disk
+    {
+        let config = state.config.read().await;
+        crate::config::save_config(&state.config_dir.join("machine.toml"), &config)
+            .map_err(internal_err)?;
+    }
+
+    Ok(Json(serde_json::to_value(&updated_cam_config).unwrap()))
 }
 
 // --- Dataset Capture ---

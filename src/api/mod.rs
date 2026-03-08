@@ -26,6 +26,7 @@ pub fn router(state: AppState) -> Router {
         // Camera endpoints
         .route("/api/camera/capture", get(handlers::camera_capture))
         .route("/api/camera/list", get(handlers::camera_list))
+        .route("/api/camera/{name}/config", put(handlers::update_camera_config))
         // Dataset capture
         .route("/api/dataset/capture", post(handlers::dataset_capture))
         .route("/api/dataset/count", get(handlers::dataset_count))

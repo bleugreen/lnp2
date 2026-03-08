@@ -1,7 +1,6 @@
 export const name = "Lumeneer server logs";
 export const description =
-  "View recent lnp2 server logs from lumeneer.local. " +
-  "Useful for debugging after deploy or checking runtime errors.";
+  "View recent lnp2 server logs from lumeneer.local. ";
 
 export const inputSchema = {
   type: "object",
@@ -17,18 +16,16 @@ export const inputSchema = {
   },
 };
 
-const SSH = "bleu@lumeneer.local";
-
-export default async function ({ inputs }) {
+export default async function ({ inputs, CWD }) {
   const lines = inputs.lines ?? 30;
   const filter = inputs.filter;
 
-  let cmd = `tail -${lines} /tmp/lnp2.log`;
-  if (filter) {
-    cmd += ` | grep -i '${filter}'`;
-  }
+  // Use just logs but non-interactive (no -f follow)
+  const cmd = filter
+    ? `journalctl -u lnp2 -n ${lines} --no-pager | grep -i '${filter}'`
+    : `journalctl -u lnp2 -n ${lines} --no-pager`;
 
-  const r = Bun.spawnSync(["ssh", SSH, cmd], {
+  const r = Bun.spawnSync(["ssh", "bleu@lumeneer.local", cmd], {
     stdout: "pipe",
     stderr: "pipe",
     timeout: 10_000,
@@ -38,6 +35,5 @@ export default async function ({ inputs }) {
     return `No output (exit ${r.exitCode}). Server may not be running.`;
   }
 
-  // Strip ANSI color codes for readability
   return r.stdout.toString().replace(/\x1b\[[0-9;]*m/g, "");
 }

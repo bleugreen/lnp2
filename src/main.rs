@@ -180,7 +180,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             let event_bus = EventBus::new();
-            let state = AppState::new(gcode, full_config, camera, vision, event_bus);
+            let state = AppState::new(gcode, full_config, camera, vision, event_bus, config_dir);
 
             // Start position polling task
             let poll_state = state.clone();

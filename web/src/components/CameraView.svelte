@@ -3,6 +3,7 @@
   import { createCameraSocket } from '../lib/websocket.js';
   import { position, jogFeedrate } from '../lib/stores.js';
   import { moveTo, getCameraList, detectAll, datasetCapture, datasetCount } from '../lib/api.js';
+  import CameraCalibration from './CameraCalibration.svelte';
 
   let canvas;
   let ctx;
@@ -211,6 +212,13 @@
     moveTo(targetX, targetY, undefined, $jogFeedrate).catch(console.error);
   }
 
+  async function refreshConfigs() {
+    try {
+      const list = await getCameraList();
+      cameraConfigs = list.configs || {};
+    } catch {}
+  }
+
   function switchCamera(name) {
     selectedCamera = name;
     detections = [];
@@ -257,6 +265,11 @@
     class="camera-canvas"
     class:flash={captureFlash}
   ></canvas>
+  <CameraCalibration
+    camera={selectedCamera}
+    config={cameraConfigs[selectedCamera]}
+    onUpdate={refreshConfigs}
+  />
 </div>
 
 <style>
