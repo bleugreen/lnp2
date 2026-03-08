@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use tokio::sync::RwLock;
@@ -20,6 +21,7 @@ pub struct AppState {
     pub camera: Option<Arc<CameraManager>>,
     pub vision: Option<Arc<VisionEngine>>,
     pub event_bus: Arc<EventBus>,
+    pub config_dir: PathBuf,
 }
 
 impl AppState {
@@ -29,6 +31,7 @@ impl AppState {
         camera: Option<CameraManager>,
         vision: Option<VisionEngine>,
         event_bus: EventBus,
+        config_dir: PathBuf,
     ) -> Self {
         let machine_config = Arc::new(RwLock::new(full_config.machine.clone()));
         let motion = Arc::new(MotionController::new(gcode.clone(), machine_config.clone()));
@@ -43,6 +46,7 @@ impl AppState {
             camera: camera.map(Arc::new),
             vision: vision.map(Arc::new),
             event_bus: Arc::new(event_bus),
+            config_dir,
         }
     }
 }

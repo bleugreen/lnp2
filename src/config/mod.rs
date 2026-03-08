@@ -116,6 +116,12 @@ pub struct FullConfig {
     pub nozzle_tips: HashMap<String, NozzleTipConfig>,
 }
 
+pub fn save_config(path: &Path, config: &MachineConfig) -> Result<(), Box<dyn std::error::Error>> {
+    let toml = toml::to_string_pretty(config)?;
+    std::fs::write(path, toml)?;
+    Ok(())
+}
+
 pub fn load_config(path: &Path) -> Result<MachineConfig, Box<dyn std::error::Error>> {
     let content = std::fs::read_to_string(path)?;
     let config: MachineConfig = toml::from_str(&content)?;
