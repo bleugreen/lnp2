@@ -110,18 +110,6 @@
     gap: 0.4rem;
   }
 
-  .cal-info {
-    display: flex;
-    flex-direction: column;
-    gap: 0.15rem;
-    font-size: 0.75rem;
-    color: #666;
-    font-family: monospace;
-    padding-bottom: 0.3rem;
-    border-bottom: 1px solid #333;
-    margin-bottom: 0.2rem;
-  }
-
   .cal-row {
     display: flex;
     align-items: center;
