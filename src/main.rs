@@ -1,10 +1,12 @@
 mod actuators;
 mod api;
 mod camera;
+mod changer;
 mod config;
 mod events;
 mod gcode;
 mod import;
+mod job;
 mod motion;
 mod photon;
 mod state;
