@@ -102,7 +102,7 @@ pub fn parse_csv(content: &str) -> Result<ImportResult, ImportError> {
 
     // Find header row to determine column mapping
     let mut col_ref = 0;
-    let mut col_val = 1;
+    let mut _col_val = 1;
     let mut col_package = 2;
     let mut col_x = 3;
     let mut col_y = 4;

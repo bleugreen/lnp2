@@ -142,10 +142,17 @@ impl JobRunner {
         info!("Job '{}' started with {} placements", self.job_config.name, total);
 
         // Phase 1: Fiducial checks for each board
-        for (board_idx, job_board) in self.job_config.boards.iter().enumerate() {
+        let num_boards = self.job_config.boards.len();
+        for board_idx in 0..num_boards {
+            let job_board = &self.job_config.boards[board_idx];
             if !job_board.enabled {
                 continue;
             }
+
+            // Clone what we need before mutable borrow
+            let origin = job_board.origin.clone();
+            let fiducials = self.board_configs[board_idx].fiducials.clone();
+
             if let Err(e) = self.check_control().await {
                 self.finish(JobStatus::Error {
                     message: e.to_string(),
@@ -154,14 +161,13 @@ impl JobRunner {
                 return;
             }
 
-            let board_config = &self.board_configs[board_idx];
-            if board_config.fiducials.len() >= 2 {
+            if fiducials.len() >= 2 {
                 self.update_step(&format!("Locating fiducials for board {}", board_idx))
                     .await;
 
                 match board::locate_board(
-                    &board_config.fiducials,
-                    &job_board.origin,
+                    &fiducials,
+                    &origin,
                     &self.app_state,
                 )
                 .await
@@ -183,9 +189,9 @@ impl JobRunner {
             } else {
                 // No fiducials — use origin-only transform
                 let transform = AffineTransform::from_translation_rotation(
-                    job_board.origin.x,
-                    job_board.origin.y,
-                    job_board.origin.rotation,
+                    origin.x,
+                    origin.y,
+                    origin.rotation,
                 );
                 let mut state = self.job_state.write().await;
                 state.boards[board_idx].transform = Some(transform);
