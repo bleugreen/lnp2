@@ -61,6 +61,12 @@ export async function sendGcode(command) {
   return request('POST', '/api/gcode', { command });
 }
 
+// --- Camera Config ---
+
+export async function updateCameraConfig(name, config) {
+  return request('PUT', `/api/camera/${name}/config`, config);
+}
+
 // --- Dataset ---
 
 export async function datasetCapture(camera, label) {

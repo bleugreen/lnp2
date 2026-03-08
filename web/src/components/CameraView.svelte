@@ -3,6 +3,7 @@
   import { createCameraSocket } from '../lib/websocket.js';
   import { position, jogFeedrate } from '../lib/stores.js';
   import { moveTo, getCameraList, detectAll, datasetCapture, datasetCount } from '../lib/api.js';
+  import CameraCalibration from './CameraCalibration.svelte';
 
   let canvas;
   let ctx;
@@ -211,6 +212,13 @@
     moveTo(targetX, targetY, undefined, $jogFeedrate).catch(console.error);
   }
 
+  async function refreshConfigs() {
+    try {
+      const list = await getCameraList();
+      cameraConfigs = list.configs || {};
+    } catch {}
+  }
+
   function switchCamera(name) {
     selectedCamera = name;
     detections = [];
@@ -249,14 +257,29 @@
       {/if}
     </div>
   </div>
-  <canvas
-    bind:this={canvas}
-    width={width}
-    height={height}
-    onclick={handleClick}
-    class="camera-canvas"
-    class:flash={captureFlash}
-  ></canvas>
+  <div class="canvas-wrapper">
+    <canvas
+      bind:this={canvas}
+      width={width}
+      height={height}
+      onclick={handleClick}
+      class="camera-canvas"
+      class:flash={captureFlash}
+    ></canvas>
+    {#if cameraConfigs[selectedCamera]}
+      {@const cfg = cameraConfigs[selectedCamera]}
+      <div class="fov-overlay">
+        {cfg.upp_x?.toFixed(4)} × {cfg.upp_y?.toFixed(4)} mm/px
+        &nbsp;|&nbsp;
+        {(cfg.upp_x * cfg.width).toFixed(1)} × {(cfg.upp_y * cfg.height).toFixed(1)} mm
+      </div>
+    {/if}
+  </div>
+  <CameraCalibration
+    camera={selectedCamera}
+    config={cameraConfigs[selectedCamera]}
+    onUpdate={refreshConfigs}
+  />
 </div>
 
 <style>
@@ -344,6 +367,23 @@
     color: #888;
     min-width: 1.5rem;
     text-align: center;
+  }
+
+  .canvas-wrapper {
+    position: relative;
+  }
+
+  .fov-overlay {
+    position: absolute;
+    bottom: 4px;
+    left: 4px;
+    padding: 2px 6px;
+    background: rgba(0, 0, 0, 0.6);
+    color: #888;
+    font-family: monospace;
+    font-size: 0.7rem;
+    border-radius: 3px;
+    pointer-events: none;
   }
 
   .camera-canvas.flash {
