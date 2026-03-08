@@ -7,7 +7,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::Mutex;
 use tokio::sync::RwLock;
 use tokio_serial::SerialPortBuilderExt;
-use tracing::{debug, error};
+use tracing::{debug, error, info};
 
 use crate::config::SerialConfig;
 
@@ -50,8 +50,36 @@ pub struct GCodeDriver {
 }
 
 impl GCodeDriver {
+    /// Auto-detect a serial port by scanning /dev/ttyACM* and /dev/ttyUSB*.
+    fn detect_port() -> Result<String, GCodeError> {
+        let prefixes = ["/dev/ttyACM", "/dev/ttyUSB"];
+        for prefix in &prefixes {
+            let dir = std::path::Path::new("/dev");
+            if let Ok(entries) = std::fs::read_dir(dir) {
+                let mut matches: Vec<_> = entries
+                    .flatten()
+                    .filter(|e| e.path().to_string_lossy().starts_with(prefix))
+                    .collect();
+                matches.sort_by_key(|e| e.path());
+                if let Some(entry) = matches.first() {
+                    let path = entry.path().to_string_lossy().to_string();
+                    info!("Auto-detected serial port: {}", path);
+                    return Ok(path);
+                }
+            }
+        }
+        Err(GCodeError::Command("No serial port found (tried /dev/ttyACM*, /dev/ttyUSB*)".into()))
+    }
+
     pub async fn connect(config: &SerialConfig, init_commands: &[String]) -> Result<Arc<Self>, GCodeError> {
-        let port = tokio_serial::new(&config.port, config.baud)
+        let port_path = if config.port == "auto" {
+            Self::detect_port()?
+        } else {
+            config.port.clone()
+        };
+        info!("Opening serial port: {}", port_path);
+
+        let port = tokio_serial::new(&port_path, config.baud)
             .flow_control(tokio_serial::FlowControl::Hardware)
             .data_bits(tokio_serial::DataBits::Eight)
             .parity(tokio_serial::Parity::None)

@@ -1,0 +1,27 @@
+[Unit]
+Description=lnp2 pick-and-place controller
+After=network.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=bleu
+WorkingDirectory=/home/bleu/lnp2/production
+ExecStart=/home/bleu/lnp2/production/lnp2 serve --config config
+Restart=on-failure
+RestartSec=3
+
+# Hardware access
+SupplementaryGroups=dialout video
+
+# Environment
+Environment=RUST_LOG=info
+Environment=ORT_DYLIB_PATH=/home/bleu/onnxruntime-linux-x64-1.24.2/lib/libonnxruntime.so
+
+# Security hardening
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

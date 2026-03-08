@@ -1,5 +1,5 @@
 [serial]
-port = "/dev/ttyACM0"
+port = "auto"
 baud = 115200
 timeout_ms = 10000
 motion_timeout_ms = 30000
