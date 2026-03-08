@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use bytes::Bytes;
 use tokio::sync::{broadcast, RwLock};
@@ -24,6 +25,8 @@ pub struct CameraManager {
 
 struct CameraHandle {
     config: Arc<RwLock<CameraConfig>>,
+    flip_x: Arc<AtomicBool>,
+    flip_y: Arc<AtomicBool>,
     latest_frame: Arc<RwLock<Option<Bytes>>>,
     broadcast_tx: broadcast::Sender<Bytes>,
     _task: JoinHandle<()>,
@@ -42,18 +45,22 @@ impl CameraManager {
             let device = config.device.clone();
             let width = config.width;
             let height = config.height;
-            let flip_x = config.flip_x;
-            let flip_y = config.flip_y;
+            let flip_x = Arc::new(AtomicBool::new(config.flip_x));
+            let flip_y = Arc::new(AtomicBool::new(config.flip_y));
             let cam_name: String = name.clone();
 
+            let flip_x_ref = flip_x.clone();
+            let flip_y_ref = flip_y.clone();
             let task = tokio::task::spawn_blocking(move || {
-                capture_loop(&cam_name, &device, width, height, flip_x, flip_y, frame_ref, tx);
+                capture_loop(&cam_name, &device, width, height, &flip_x_ref, &flip_y_ref, frame_ref, tx);
             });
 
             handles.insert(
                 name.clone(),
                 CameraHandle {
                     config: Arc::new(RwLock::new(config.clone())),
+                    flip_x,
+                    flip_y,
                     latest_frame,
                     broadcast_tx,
                     _task: task,
@@ -94,9 +101,11 @@ impl CameraManager {
 
     /// Update a camera's config at runtime (e.g. calibration changes).
     /// UPP changes take effect immediately for API consumers.
-    /// Flip changes are stored but require restart to affect the capture loop.
+    /// Flip changes take effect on the next captured frame via AtomicBool.
     pub async fn update_config(&self, name: &str, new_config: CameraConfig) -> Result<(), CameraError> {
         let handle = self.cameras.get(name).ok_or_else(|| CameraError::NotFound(name.to_string()))?;
+        handle.flip_x.store(new_config.flip_x, Ordering::Relaxed);
+        handle.flip_y.store(new_config.flip_y, Ordering::Relaxed);
         let mut config = handle.config.write().await;
         *config = new_config;
         Ok(())
@@ -108,8 +117,8 @@ fn capture_loop(
     device: &str,
     width: u32,
     height: u32,
-    flip_x: bool,
-    flip_y: bool,
+    flip_x: &AtomicBool,
+    flip_y: &AtomicBool,
     latest_frame: Arc<RwLock<Option<Bytes>>>,
     broadcast_tx: broadcast::Sender<Bytes>,
 ) {
@@ -164,8 +173,10 @@ fn capture_loop(
     loop {
         match camera.frame_raw() {
             Ok(raw_bytes) => {
-                let jpeg_vec = if flip_x || flip_y {
-                    flip_jpeg(&raw_bytes, flip_x, flip_y)
+                let fx = flip_x.load(Ordering::Relaxed);
+                let fy = flip_y.load(Ordering::Relaxed);
+                let jpeg_vec = if fx || fy {
+                    flip_jpeg(&raw_bytes, fx, fy)
                 } else {
                     raw_bytes.to_vec()
                 };
