@@ -28,11 +28,11 @@ impl<'a> Drop for BusyGuard<'a> {
 // --- Response types ---
 
 #[derive(Serialize)]
-pub(crate) struct ErrorResponse {
-    error: String,
+pub struct ErrorResponse {
+    pub error: String,
 }
 
-fn internal_err(e: impl std::fmt::Display) -> (StatusCode, Json<ErrorResponse>) {
+pub fn internal_err(e: impl std::fmt::Display) -> (StatusCode, Json<ErrorResponse>) {
     (
         StatusCode::INTERNAL_SERVER_ERROR,
         Json(ErrorResponse {
