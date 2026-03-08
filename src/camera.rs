@@ -23,7 +23,7 @@ pub struct CameraManager {
 }
 
 struct CameraHandle {
-    config: CameraConfig,
+    config: Arc<RwLock<CameraConfig>>,
     latest_frame: Arc<RwLock<Option<Bytes>>>,
     broadcast_tx: broadcast::Sender<Bytes>,
     _task: JoinHandle<()>,
@@ -53,7 +53,7 @@ impl CameraManager {
             handles.insert(
                 name.clone(),
                 CameraHandle {
-                    config: config.clone(),
+                    config: Arc::new(RwLock::new(config.clone())),
                     latest_frame,
                     broadcast_tx,
                     _task: task,
@@ -83,11 +83,23 @@ impl CameraManager {
     }
 
     /// Get camera configs for the list endpoint.
-    pub fn configs(&self) -> HashMap<String, &CameraConfig> {
-        self.cameras
-            .iter()
-            .map(|(name, handle)| (name.clone(), &handle.config))
-            .collect()
+    pub async fn configs(&self) -> HashMap<String, CameraConfig> {
+        let mut result = HashMap::new();
+        for (name, handle) in &self.cameras {
+            let config = handle.config.read().await;
+            result.insert(name.clone(), config.clone());
+        }
+        result
+    }
+
+    /// Update a camera's config at runtime (e.g. calibration changes).
+    /// UPP changes take effect immediately for API consumers.
+    /// Flip changes are stored but require restart to affect the capture loop.
+    pub async fn update_config(&self, name: &str, new_config: CameraConfig) -> Result<(), CameraError> {
+        let handle = self.cameras.get(name).ok_or_else(|| CameraError::NotFound(name.to_string()))?;
+        let mut config = handle.config.write().await;
+        *config = new_config;
+        Ok(())
     }
 }
 

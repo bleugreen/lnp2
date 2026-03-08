@@ -304,7 +304,7 @@ pub async fn camera_list(
 ) -> Json<serde_json::Value> {
     match &state.camera {
         Some(camera) => {
-            let configs = camera.configs();
+            let configs = camera.configs().await;
             Json(serde_json::json!({
                 "cameras": configs.keys().collect::<Vec<_>>(),
                 "configs": configs
