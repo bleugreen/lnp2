@@ -1,4 +1,5 @@
 pub mod handlers;
+pub mod job_handlers;
 pub mod ws;
 
 use axum::routing::{get, post, put};
@@ -35,6 +36,22 @@ pub fn router(state: AppState) -> Router {
         .route("/api/vision/detect_pocket", post(handlers::vision_detect_pocket))
         .route("/api/vision/detect_fiducial", post(handlers::vision_detect_fiducial))
         .route("/api/vision/align_part", post(handlers::vision_align_part))
+        // Board endpoints
+        .route("/api/board/import", post(job_handlers::board_import))
+        .route("/api/board/list", get(job_handlers::board_list))
+        .route("/api/board/{name}", get(job_handlers::board_get))
+        .route("/api/board/{name}", put(job_handlers::board_update))
+        // Job endpoints
+        .route("/api/job/list", get(job_handlers::job_list))
+        .route("/api/job/status", get(job_handlers::job_status))
+        .route("/api/job/create", post(job_handlers::job_create))
+        .route("/api/job/start", post(job_handlers::job_start))
+        .route("/api/job/pause", post(job_handlers::job_pause))
+        .route("/api/job/resume", post(job_handlers::job_resume))
+        .route("/api/job/abort", post(job_handlers::job_abort))
+        .route("/api/job/skip", post(job_handlers::job_skip))
+        .route("/api/job/{name}", get(job_handlers::job_get))
+        .route("/api/job/{name}", put(job_handlers::job_update))
         // WebSocket endpoints
         .route("/api/camera/stream", get(ws::camera_stream))
         .route("/api/events", get(ws::events))
